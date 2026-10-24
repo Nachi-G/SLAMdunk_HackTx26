@@ -1,0 +1,131 @@
+# HackTX: SANDO sensor and reconstruction integration
+
+Source inspected: `mit-acl/sando` commit `1a738df919f9abe60cee3c1afbecd72579da8f6f` on 2026-10-24. This is a source audit and integration plan, not a report of a successful simulation run.
+
+## Decision
+
+Build an independent ROS 2 mapping/recording adapter alongside SANDO. The easiest live-map exposure is the existing ACL mapper's `occupancy_grid` PointCloud2 output. The reusable raw-data boundary is its input: Mid360 PointCloud2, D435 images/calibration/depth, and timestamped TF. Keep raw recordings for a separate offline Nerfstudio/Splatfacto process. Do not put reconstruction in the planner callback.
+
+The RGB camera exists and publishes through its plugin, but SANDO does not use RGB imagery to build a photorealistic map today. Navigation normally uses LiDAR; the D435 depth cloud is an alternative mapper input. Neither SANDO nor the mapper provides an existing NeRF exporter.
+
+## Follow these files first
+
+| File | Relevant role |
+|---|---|
+| `scripts/run_sim.py:831` | `generate_gazebo_yaml()` orchestrates Gazebo, ACL mapper, onboard planner and optional goal sender. Default mapper input is `mid360_PointCloud2`; `--d435` switches to the depth cloud. Both sensor definitions remain mounted. |
+| `scripts/bag_record.py` | Existing bag recorder already includes RGB, simulated LiDAR, state, map and TF/clock. Extend its defaults or custom topic set with both CameraInfo streams, depth, depth cloud, odometry and validated capture poses. |
+| `launch/base_sando.launch.py` | Starts Gazebo Classic, world and optional moving obstacles. Has `world_file` override and maps `office` / `hospital` world names; model assets still need checking. |
+| `launch/onboard_sando.launch.py:231` | Expands the drone Xacro, starts robot_state_publisher, spawns the model, and launches fake_sim. Mapper is launched separately by run_sim, not here. |
+| `urdf/quadrotor.urdf.xacro:19` | Active Mid360 mount at `(0,0,0.2)`, pitch `0.3` radians; active D435 mount at `(0.05,0,0)`. |
+| `urdf/_d435.gazebo.xacro:128` | D435 plugin, configured topics, resolutions and rates. |
+| `urdf/_d435.urdf.xacro:79` | Camera mount and optical-frame TF chain. Use this entire chain, not just the 5 cm body offset. |
+| `deps/realsense_gazebo_plugin/src/gazebo_ros_realsense.cpp` | Actual ROS image/CameraInfo/PointCloud2 publishers; timestamp and RGB-cloud limitations below. |
+| `deps/livox_laser_simulation_ros2/urdf/mid360.xacro` and `src/livox_points_plugin.cpp` | LiDAR sensor/plugin and raw cloud generation. |
+| `deps/acl-mapping/global_mapper_ros/launch/global_mapper_node.launch.py:58` | Configurable mapper topic boundary. Namespace `NX01`, input `depth_pointcloud_topic`, pose input `state`, global frame `map`. |
+| `deps/acl-mapping/global_mapper_ros/src/global_mapper_ros.cc:897` | `PointCloudCallback()` transforms raw cloud and feeds mapper. Occupancy output is XYZ, losing camera appearance. |
+| `src/sando/fake_sim.cpp:297` | Synthesized drone TF, state, odometry and asynchronous Gazebo pose updates. |
+| `src/sando/sando_node.cpp:209` | Planner synchronizes occupied and unknown PointCloud2 topics; `mapCallback()` at line 2063 passes the maps into planning. Useful to understand consumption, not the raw RGB capture point. |
+| `src/sando/sando_node.cpp:147` | Operator destinations enter `term_goal` as PoseStamped. `goal` is the generated motion-setpoint channel. |
+
+## Proposed integration contract
+
+Expected names below come from source with namespace `NX01`; inspect the running graph before hardcoding them.
+
+| Purpose | Expected topic | Type / treatment |
+|---|---|---|
+| Existing live navigation map | `/NX01/occupancy_grid` | `sensor_msgs/msg/PointCloud2`, map-frame occupied voxel centers. Stream to UI first. |
+| Lower-bandwidth live map | `/NX01/downsampled_occupancy_grid` | PointCloud2, available when mapper downsampling is enabled. Prefer for an initial remote UI if detail is sufficient. |
+| Unknown space | `/NX01/unknown_grid` | PointCloud2; unknown is not measured solid geometry. |
+| Raw LiDAR | `/NX01/mid360_PointCloud2` | PointCloud2. Transform using its actual header frame at acquisition time; accumulate/downsample for a persistent geometric map. |
+| RGB | `/NX01/d435/color/image_raw` | Image, configured 720 x 540. |
+| RGB calibration | `/NX01/d435/color/camera_info` | CameraInfo; preserve K, distortion and dimensions. |
+| Depth | `/NX01/d435/depth/image_raw` | Image, configured 120 x 90. Plugin publishes 16UC1 scaled depth; confirm units against a known simulated distance. |
+| Depth calibration | `/NX01/d435/depth/camera_info` | CameraInfo for depth resolution. |
+| Depth cloud | `/NX01/d435/depth/color/points` | PointCloud2; name alone does not establish registered RGB coloring. |
+| Drone state | `/NX01/state` | `dynus_interfaces/msg/State` in `map`. |
+| Convenient odometry | `/NX01/visual_slam/odom` | Odometry enabled by onboard launch despite its name; generated by fake_sim, not visual SLAM. |
+| Transforms | `/tf`, `/tf_static` | Include dynamic body and static sensor-to-body transforms. Verify resolved names and frames. |
+| Timing | `/clock` if published | Record it; existing sources currently use wall-time paths, so recording clock alone does not synchronize them. |
+| Destination / arrival | `/NX01/term_goal`, `/NX01/goal_reached` | PoseStamped / Empty. |
+
+The existing occupancy map is filtered and bounded navigation data. For example, `static_global_mapper.yaml` uses 0.3 m voxels, filters points below 0.5 m, and has finite world dimensions. It is suitable for the first live-map demo, but a separate raw-cloud accumulator is needed for a detailed persistent building map including floors. Treat occupancy messages as map snapshots, not newly observed raw scans.
+
+## Important source-level findings
+
+1. **No sensor enabling work is needed in the active Gazebo model.** Both sensors are instantiated. RGB publication still needs a runtime smoke test. RViz-only / fake sensor modes do not provide a textured Gazebo RGB dataset.
+2. **Current depth-cloud colors are unreliable.** `FillPointCloudHelper()` copies color only when its most recent shared image buffer matches depth dimensions. Default color is 720 x 540 and depth 120 x 90, so the color branch does not match and falls back to black (other callbacks can overwrite the buffer too). It is not synchronized color registration. Record RGB separately; implement timestamped reprojection using intrinsics/extrinsics for a colored map. Matching dimensions alone is not sufficient.
+3. **The mapper uses latest TF.** `PointCloudCallback()` asks for `rclcpp::Time(0)`, rather than the cloud header stamp. Reuse its live output for MVP, but use timestamped transforms in reconstruction/accurate accumulation; skip/report missing TF rather than substitute the latest pose.
+4. **Clock behavior needs deliberate work.** Base/onboard launch set several `use_sim_time` values false; RealSense callbacks stamp `node_->now()`, while the LiDAR PointCloud2 path explicitly stamps `rclcpp::Clock().now()`. A blanket `use_sim_time=true` change will not fix every path. Start by verifying wall-time alignment and slow scans; for accurate capture use simulator acquisition timestamps and consistent clocks across plugins, pose and TF.
+5. **Existing odometry is not independent Gazebo ground truth.** fake_sim follows planner setpoints and asynchronously sends SetEntityState requests. Its TF extrapolates between goals, while odometry copies `state_`; TF, odometry and rendered Gazebo pose can differ. Obtain/record the actual rendered model or camera pose with capture timestamps for reconstruction validation; do not advertise the current odometry as measured ground truth.
+6. **Depth fidelity is low by default.** Increase depth resolution after a working baseline, perhaps to 320 x 240 with a measured simulator frame rate. Check camera and plugin update-rate settings together. Disable moving obstacles for the first dataset.
+7. **LiDAR messages already combine several scans.** `mid360.xacro` sets `accumulate_scans` to 5. The plugin buffers sensor-local points and publishes them together with a new header timestamp, without transforming each historical scan by its capture pose. This can distort geometry during motion. For accurate recording, begin with one scan per message or implement motion compensation with per-scan timestamps; reducing this setting should be validated for navigation too.
+
+## First runtime milestone
+
+On the documented Ubuntu 22.04 / ROS 2 Humble + Gazebo Classic environment, source the built workspace and launch the known baseline. `scripts/run_sim.py` is the path from this repository root (README examples sometimes assume the workspace root).
+
+```bash
+python3 scripts/run_sim.py --mode static --difficulty easy --setup-bash /absolute/path/to/install/setup.bash
+ros2 topic list -t
+ros2 topic info -v /NX01/mid360_PointCloud2
+ros2 topic info -v /NX01/d435/color/image_raw
+ros2 topic info -v /NX01/d435/color/camera_info
+ros2 topic info -v /NX01/d435/depth/image_raw
+ros2 topic hz /NX01/d435/color/image_raw
+ros2 topic echo /NX01/d435/color/camera_info --once
+```
+
+Then check an actual RGB image, the cloud header frames, and timestamp offsets. Expected color optical frame is `NX01/NX01_d435_color_optical_frame`: the name contains the namespace twice because sensor name and TF prefix are distinct. Use the published header instead of guessing. Verify timestamped `map -> image.header.frame_id` lookup in the recording adapter.
+
+Record an initial bag after validating the names:
+
+```bash
+ros2 bag record -o room_scan \
+  /NX01/d435/color/image_raw /NX01/d435/color/camera_info \
+  /NX01/d435/depth/image_raw /NX01/d435/depth/camera_info \
+  /NX01/d435/depth/color/points /NX01/mid360_PointCloud2 \
+  /NX01/state /NX01/visual_slam/odom /tf /tf_static /clock
+```
+
+Use QoS compatible with actual publishers: sensor-data/best-effort subscriptions where needed and transient-local handling for static TF. Confirm the bag contains static transforms even if recording starts after model startup. Record actual Gazebo pose too once its capture path exists. Check bag metadata, frame coverage, dropped messages and timestamp alignment before training.
+
+## Nerfstudio / Splatfacto feasibility
+
+Yes: offline Splatfacto is a sensible appearance reconstruction stage, separate from the P0 live geometric map. Export RGB images plus `transforms.json` with image paths, CameraInfo intrinsics and a camera-to-world matrix for every selected image. Known simulator poses mean COLMAP pose estimation is optional, not required.
+
+Given `T_map_optical(t)` mapping ROS optical coordinates into map, the Nerfstudio OpenGL camera-to-world pose is:
+
+```text
+T_map_nerfstudio_camera(t) = T_map_optical(t) * diag(1, -1, -1, 1)
+```
+
+This flips local camera Y/Z, not the map world frame. Do not invert a camera-to-world matrix or apply this conversion to a body frame. Keep map coordinates in meters, Z-up. Preserve the reconstruction-to-map transform and any parser scale/centering for UI overlays.
+
+Basic training/export commands on a compatible CUDA GPU machine, after installing a pinned compatible Nerfstudio environment:
+
+```bash
+ns-train splatfacto --data datasets/room_scan
+ns-export gaussian-splat --load-config outputs/.../config.yml --output-dir exports/room_scan
+```
+
+The `config.yml` path above is a placeholder for the actual training output. The official guide estimates roughly 6 GB GPU memory for default Splatfacto, 12 GB for the big variant; dataset and software versions can change usage. Verify flags against the installed version.
+
+There is a useful integration beyond the basic docs: current upstream Nerfstudio's parser supports `ply_file_path` in transforms.json and loading XYZ/RGB seed geometry with `load_3D_points`; Splatfacto accepts seed points. Therefore a correctly registered and colored LiDAR/depth cloud can explicitly initialize splats. This is initialization, not continued LiDAR/depth supervision or a guarantee of metric accuracy. Confirm the installed version and enabled parser settings; do not assume merely recording clouds makes training use them. The documentation's generic statement that custom datasets initialize randomly is less specific than the current parser source.
+
+For a metric overlay, either disable parser reorientation/centering/automatic scaling with supported installed-version options, or save and apply its resulting transform and scale. Use held-out RGB views for appearance and depth/LiDAR plus known dimensions for geometry validation. Splatfacto's exported Gaussian PLY is a splat asset, not a conventional textured triangle mesh.
+
+Sources checked 2026-10-24:
+
+- https://docs.nerf.studio/nerfology/methods/splat.html
+- https://docs.nerf.studio/quickstart/data_conventions.html
+- https://github.com/nerfstudio-project/nerfstudio/blob/main/nerfstudio/data/dataparsers/nerfstudio_dataparser.py
+- https://github.com/nerfstudio-project/nerfstudio/blob/main/nerfstudio/models/splatfacto.py
+
+## Next implementation, in order
+
+1. Run the existing Gazebo baseline and expose mapper output + pose to the UI. No new SLAM algorithm is required for this first milestone.
+2. Add raw sensor recording, a verified camera-pose source, and a timestamp/frame audit.
+3. Add bag-to-Nerfstudio export and capture one slow overlapping static-room scan.
+4. Train/view an offline splat. Add explicit point-cloud initialization once RGB/geometry registration is verified.
+
+All dependency submodules in this checkout were already initialized at inspection time. `ros2` and `docker` were not available on this Windows host's PATH. ROS, Gurobi, runtime sensor publication, GPU training and reconstruction quality remain unvalidated here. No sensor/plugin behavior was changed as part of this source audit.

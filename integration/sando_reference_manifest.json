@@ -1,0 +1,62 @@
+﻿[
+    {
+        "path":  ".gitmodules",
+        "sha256":  "020b6cff0fe6040ecc7ece4d6ab39e8f85bc8b17bc84a435dd147b9f7ccbaaa9"
+    },
+    {
+        "path":  "CMakeLists.txt",
+        "sha256":  "5e95c6598c1adb97c7f29be4913f1a2c473d6cc8e52fd135a6ba544e2ee90c1f"
+    },
+    {
+        "path":  "LICENSE",
+        "sha256":  "c3a0dad104f0dd521d9566c7275360a93b1d27cde3213ddaf9d364b1d57c805a"
+    },
+    {
+        "path":  "package.xml",
+        "sha256":  "c47a653347635ac629e042232c15d5af05ee6cad22f11e44dd550f6737f7c7e6"
+    },
+    {
+        "path":  "README.md",
+        "sha256":  "3a1c2caf18c0b9f7022c5de3032bbef7be9571547802fe8a2d368b8c9e2ae5e7"
+    },
+    {
+        "path":  "config/sando.yaml",
+        "sha256":  "e7e51a217ae1e60de4f1be300b7fa122a6da54fc78c6a14096949bee6155191e"
+    },
+    {
+        "path":  "launch/base_sando.launch.py",
+        "sha256":  "cc72dd71cbb2508fb6ef9ea17f8bf7594a2dc2a87593c04389b46f4a8b08f9d3"
+    },
+    {
+        "path":  "launch/onboard_sando.launch.py",
+        "sha256":  "67566c8abfc00dfaf013152944d4fcd78955aaefd413e030ba6af195f1562fa1"
+    },
+    {
+        "path":  "scripts/bag_record.py",
+        "sha256":  "8867dfe1e6f962f31462f46aa196024c5d9c93524318b90e63a011ba2db86f44"
+    },
+    {
+        "path":  "scripts/run_sim.py",
+        "sha256":  "e70aaa344e4ab2fcb36417641ab4114f6ee68376f3f9ac3755f9f8b116a6def1"
+    },
+    {
+        "path":  "src/sando/fake_sim.cpp",
+        "sha256":  "e0f372a108b76aec1f5bd633b8c36c81c2714d31e76cd9a471f81297c201c959"
+    },
+    {
+        "path":  "src/sando/sando_node.cpp",
+        "sha256":  "1f420b26650e56f403130d7960b9c6ade09973775625fdb9e59ea21ada65ebad"
+    },
+    {
+        "path":  "urdf/quadrotor.urdf.xacro",
+        "sha256":  "3157f9381e301767efe0639ea769982cab07e86d56163cd205b750ad49548471"
+    },
+    {
+        "path":  "urdf/_d435.gazebo.xacro",
+        "sha256":  "f10ba9b919cb25b61d2e1a0307ac58221fdd9f77fde3a076398e2766101954d8"
+    },
+    {
+        "path":  "urdf/_d435.urdf.xacro",
+        "sha256":  "42ad5fb23cefb75faac3c9a36939c36867406d6bdfe7503578948a7b40df5fa0"
+    }
+]
