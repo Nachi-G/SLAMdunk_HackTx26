@@ -1,0 +1,22 @@
+slam_dunk_mission_supervisor:
+  ros__parameters:
+    # No motion until deliberately enabled, valid waypoints configured, source
+    # data fresh, and ROS graph reports this as the sole destination writer.
+    enable_exploration: false
+    waypoints_json: '[]'
+    planning_frame: map
+    goal_topic: /NX01/term_goal
+    pose_topic: /NX01/visual_slam/odom
+    map_topic: /NX01/occupancy_grid
+    host: 127.0.0.1
+    port: 8766
+    lookahead_m: 3.0
+    goal_seen_radius_m: 2.0
+    lease_seconds: 0.5
+    freshness_seconds: 2.0
+    bounds: [-200.0, 200.0, -200.0, 200.0, 0.5, 6.0]
+    allowed_origins:
+      - http://127.0.0.1:8080
+      - http://localhost:8080
+      - http://127.0.0.1:8765
+      - http://localhost:8765

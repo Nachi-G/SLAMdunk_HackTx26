@@ -4,6 +4,17 @@ import asyncio
 from http import HTTPStatus
 from pathlib import Path
 import threading
+from urllib.parse import urlsplit
+
+
+# Deliberate allowlist: never expose arbitrary package or workspace files.
+WEB_ASSETS = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    **{f"/{name}.mjs": (f"{name}.mjs", "text/javascript; charset=utf-8")
+       for name in ("app", "scene", "model", "adapter", "demo", "camera")},
+}
 
 
 async def send_latest(websocket, store, seen, timeout=1.0):
@@ -54,7 +65,18 @@ class BridgeServer:
     async def _http(self, path, headers):
         if path == "/stream" and headers.get("Upgrade", "").lower() == "websocket":
             return None
-        if path in ("/", "/index.html"):
+        try:
+            route = urlsplit(path).path
+        except ValueError:
+            route = ""
+        if route in WEB_ASSETS:
+            filename, content_type = WEB_ASSETS[route]
+            asset = Path(__file__).with_name("web") / filename
+            if asset.is_file():
+                return HTTPStatus.OK, [("Content-Type", content_type),
+                                       ("Cache-Control", "no-store"),
+                                       ("X-Content-Type-Options", "nosniff")], asset.read_bytes()
+        if route in ("/legacy", "/legacy.html"):
             body = Path(__file__).with_name("viewer.html").read_bytes()
             return HTTPStatus.OK, [("Content-Type", "text/html; charset=utf-8"),
                                    ("Cache-Control", "no-store")], body

@@ -1,5 +1,11 @@
 # Live map bridge
 
+The [operator dashboard](OPERATOR_UI.md) now has a drone-camera panel and
+press-and-hold steering. The telemetry stream remains read-only; optional real
+steering uses the separate [SANDO mission supervisor](SANDO_CONTROL.md), with
+lease expiry, waypoint handoff and explicit readiness. Physical Pause/Hold is
+still unsupported. The browser-only demo works without ROS or a camera source.
+
 This read-only ROS 2 Humble Python package streams SANDO's existing geometric map and odometry to a bundled interactive browser viewer. It does not train a scene or wait for a recording. Open the viewer and map snapshots appear as the existing mapper publishes them; the default bridge processing/transmission target is at most 10 Hz. Actual end-to-end latency must be measured on the simulator machine.
 
 ## Run with the simulation
@@ -17,7 +23,7 @@ source install/setup.bash
 ros2 run slam_dunk_bridge live_map_bridge
 ```
 
-Open **http://127.0.0.1:8765/** on that machine. Drag to orbit, scroll to zoom, and click Fit map to recenter. The cyan marker shows the odometry pose and its +X heading; the orange line is the last 500 received pose samples, **not a planned trajectory**. Map points are colored by height, not camera RGB. Connection/age indicators distinguish missing or stale data. Existing geometry remains visible during a pause/disconnection.
+Open **http://127.0.0.1:8765/?source=live** on that machine to view bridge data. The dashboard defaults to an explicitly labeled browser-only demo without this query. See [the operator UI guide](OPERATOR_UI.md) for Live/History screens, local preview, margin proposals, and test instructions. Drag to orbit, scroll to zoom, and use Fit to recenter. The coral marker shows drone pose; the lime line is received pose history, **not a planned trajectory**. Map points are colored by height, not camera RGB. Connection/freshness indicators distinguish missing or stale data. Existing geometry remains visible during a pause/disconnection. The original cyan/orange single viewer remains at `/legacy`.
 
 Defaults are `/NX01/occupancy_grid`, `/NX01/visual_slam/odom`, target frame `map`, 20,000 displayed points, maximum 2,000,000 input points / 64 MB input cloud, eight clients, and loopback-only listening. Configure them with ROS parameters:
 
@@ -30,7 +36,7 @@ ros2 run slam_dunk_bridge live_map_bridge --ros-args \
 
 The downsampled topic exists only when upstream mapper downsampling is enabled. Discover actual names/QoS with `ros2 topic list -t` and `ros2 topic info -v TOPIC`. Both subscriptions use best-effort KeepLast(1), compatible with the mapper's sensor QoS and the odometry reliable publisher. The callback retains only the newest sample; a timer processes it and records overwritten/rejected counters. Sensor/map source publication stamps are preserved. Queue drops inside DDS are not included in application counters.
 
-To view from another device, explicitly bind `-p host:=0.0.0.0` and open `http://SIMULATOR_IP:8765/` on a trusted network, or tunnel the loopback endpoint over SSH. This local-development endpoint has no authentication or TLS. No command/control messages are accepted.
+To view from another device, explicitly bind `-p host:=0.0.0.0` and open `http://SIMULATOR_IP:8765/?source=live` on a trusted network, or tunnel the loopback endpoint over SSH. This local-development endpoint has no authentication or TLS. No command/control messages are accepted.
 
 ## Synthetic demonstration without ROS
 
@@ -42,7 +48,7 @@ python3 -m pip install 'websockets==13.1'
 python3 -m slam_dunk_bridge.demo
 ```
 
-Open the same URL. The viewer clearly labels **SYNTHETIC DEMO**. This validates the transport/viewer without asserting that Gazebo, ROS topics, pose alignment or navigation work. Stop with Ctrl+C. `--host` and `--port` are available for this demo.
+Open **http://127.0.0.1:8765/?source=live** (or the URL printed by the demo). This connects to the Python synthetic stream, and clearly labels **SYNTHETIC DEMO**. The default `/` runs the separate browser-only interactive demo. Neither validates Gazebo, ROS topic wiring, pose alignment, or physical navigation. Stop with Ctrl+C. `--host` and `--port` are available for this demo.
 
 Use the same `python3` environment for this pinned dependency, colcon, and the installed ROS executable. Ubuntu 22.04's `python3-websockets` package alone may provide an older version; rosdep alone does not satisfy this package's tested WebSocket version. The bridge uses the explicit `websockets.legacy.server` API from 13.1.
 

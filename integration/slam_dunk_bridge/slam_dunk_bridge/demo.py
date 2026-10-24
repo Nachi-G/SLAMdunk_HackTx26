@@ -17,7 +17,7 @@ def main():
     maps = MapPublisher(store)
     server = BridgeServer(store, args.host, args.port)
     server.start()
-    print(f"Synthetic demo: http://{args.host}:{args.port}/ (Ctrl+C to stop)", flush=True)
+    print(f"Synthetic bridge demo: http://{args.host}:{args.port}/?source=live (Ctrl+C to stop)", flush=True)
     start, last_map, last_health = time.monotonic(), -1, -1
     try:
         while True:
