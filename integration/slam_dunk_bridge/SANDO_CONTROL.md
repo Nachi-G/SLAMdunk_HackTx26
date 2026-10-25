@@ -2,9 +2,10 @@
 
 The dashboard's direction buttons now temporarily override exploration while
 pressed. Releasing, leaving the page, losing focus, or losing the command lease
-returns destination ownership to autonomous **waypoint** exploration. This is
-not frontier selection, coverage planning, direct velocity control, or validated
-physical stopping. The local demo illustrates the interaction without ROS.
+returns destination ownership to configured autonomy: the default waypoint loop
+or the optional [continuous frontier explorer](EXPLORATION.md). Neither is
+direct velocity control or validated physical stopping. The local demo
+illustrates the interaction without ROS.
 
 ## Components
 

@@ -1,8 +1,8 @@
 """ROS-independent, leased destination ownership for SANDO.
 
 This publishes destinations, not actuator setpoints or a physical stop. A
-configured waypoint provider supplies the initial autonomy; it is not frontier
-exploration. All authority transitions and goal publication share one lock.
+waypoint loop or bounded frontier provider supplies autonomous destinations.
+All authority transitions and goal publication share one lock.
 """
 
 import math
@@ -35,7 +35,7 @@ class SteeringSupervisor:
     def __init__(self, publish_goal, *, clock=time.monotonic, waypoints=(), enabled=False,
                  frame_id="map", bounds=(-200, 200, -200, 200, .5, 6), lookahead=3.0,
                  goal_seen_radius=2.0, ttl_seconds=.5, freshness_seconds=2.0,
-                 refresh_hz=5.0, waypoint_radius=.7):
+                 refresh_hz=5.0, waypoint_radius=.7, autonomy_provider=None):
         if not callable(publish_goal) or not callable(clock):
             raise ValueError("publish_goal and clock must be callable")
         if (not isinstance(frame_id, str) or not frame_id or frame_id.startswith("/") or
@@ -50,12 +50,18 @@ class SteeringSupervisor:
             raise ValueError("Invalid control limits; lookahead must exceed goal_seen_radius")
         if not isinstance(waypoints, (list, tuple)) or len(waypoints) > 1000:
             raise ValueError("Provide at most 1000 waypoints")
+        if autonomy_provider is not None and not all(callable(getattr(autonomy_provider, name, None))
+                for name in ("ready", "next_goal", "status", "interrupt", "observe", "publication_failed")):
+            raise ValueError("Invalid autonomous destination provider")
+        if autonomy_provider is not None and waypoints:
+            raise ValueError("Choose frontier exploration or waypoints, not both")
         self.bounds = tuple(bounds)
         if not all(_vector(p, 3) and self._in_bounds(p) for p in waypoints):
             raise ValueError("Waypoints must be finite and within planning bounds")
         self.publish_goal, self.clock = publish_goal, clock
         self.waypoints, self.enabled, self.frame_id = tuple(tuple(float(v) for v in p) for p in waypoints), enabled, frame_id
         self.authority_ready = True
+        self.autonomy_provider = autonomy_provider
         self.lookahead, self.goal_seen_radius = lookahead, goal_seen_radius
         self.ttl, self.freshness, self.period, self.waypoint_radius = ttl_seconds, freshness_seconds, 1/refresh_hz, waypoint_radius
         self.lock = threading.RLock()
@@ -64,14 +70,23 @@ class SteeringSupervisor:
         self.received = {"pose": None, "map": None}
         self.source_stamp = {"pose": -1.0, "map": -1.0}
         self.last_goal, self.last_publish, self.last_steer_position = None, -math.inf, None
-        self.mode, self.reason, self.fault = "waiting", "Configure and enable exploration waypoints", None
+        self.mode, self.reason, self.fault = "waiting", "Configure and enable autonomous exploration", None
 
     def _in_bounds(self, position):
         return all(self.bounds[2*i] <= position[i] <= self.bounds[2*i+1] for i in range(3))
 
     def _ready(self, now):
-        return (not self.fault and self.authority_ready and self.enabled and bool(self.waypoints) and self.position is not None
+        return (not self.fault and self.authority_ready and self.enabled
+                and (bool(self.waypoints) or self.autonomy_provider is not None)
+                and (self.autonomy_provider is None or self.autonomy_provider.ready(now)) and self.position is not None
                 and all(t is not None and 0 <= now-t <= self.freshness for t in self.received.values()))
+
+    def update_observation(self, origin, endpoints, stamp, frame_id, source_age_seconds=0.):
+        """Only timestamped raw range observations provide exploration evidence."""
+        with self.lock:
+            if self.autonomy_provider is None or frame_id != self.frame_id:
+                return False
+            return self.autonomy_provider.observe(origin, endpoints, stamp, source_age_seconds)
 
     def update_pose(self, position, orientation, stamp, frame_id, source_age_seconds=0.):
         with self.lock:
@@ -109,7 +124,7 @@ class SteeringSupervisor:
 
     def status(self, *, owner_id=None, accepted=None, request_id=None, reason=None):
         with self.lock:
-            return {"type": "control_status", "protocol_version": 1, "epoch": self.epoch,
+            result = {"type": "control_status", "protocol_version": 1, "epoch": self.epoch,
                     "mode": self.mode, "ready": bool(self._ready(self.clock())),
                     "lease_id": self.lease["id"] if self.lease else None,
                     "active_request_id": self.lease["request_id"] if self.lease else None,
@@ -117,6 +132,9 @@ class SteeringSupervisor:
                     "reason": reason if reason is not None else self.reason,
                     "ttl_ms": round(self.ttl*1000), "owner_id": owner_id,
                     "capabilities": {"steering": True, "pause": False}}
+            if self.autonomy_provider is not None:
+                result["exploration"] = self.autonomy_provider.status()
+            return result
 
     def _publish(self, target, *, force=False):
         if not force and self.last_goal is not None and math.dist(target, self.last_goal) <= .12:
@@ -135,10 +153,29 @@ class SteeringSupervisor:
 
     def _autonomous(self, *, force=False, reason="Autonomous waypoint exploration"):
         if not self._ready(self.clock()):
+            if self.autonomy_provider is not None:
+                self.autonomy_provider.interrupt()
             self.mode = "fault" if self.fault else "waiting"
             self.reason = self.fault or ("Waiting for exclusive destination ownership; prior SANDO goal may remain active"
                                          if not self.authority_ready else
-                                         "Waiting for enabled waypoints and fresh map/pose; prior SANDO goal may remain active")
+                                         "Waiting for enabled autonomy and fresh map/pose/range observations; prior SANDO goal may remain active")
+            return
+        if self.autonomy_provider is not None:
+            try:
+                decision = self.autonomy_provider.next_goal(self.position)
+                self.mode, self.reason = "autonomous", decision.reason
+                if decision.goal is not None:
+                    if not _vector(decision.goal, 3) or not self._in_bounds(decision.goal):
+                        raise ValueError("Exploration goal outside supervisor bounds")
+                    self._publish(decision.goal, force=force)
+                    if self.fault:
+                        self.autonomy_provider.publication_failed()
+                elif self.last_goal is not None:
+                    self.reason += "; prior SANDO destination may remain active; this is not Stop/Hold"
+            except Exception as error:
+                self.fault = f"Exploration failed: {type(error).__name__}"
+                self.mode, self.reason = "fault", self.fault
+                self.autonomy_provider.publication_failed()
             return
         # Advance through nearby points, bounded even if every waypoint is near.
         for _ in range(len(self.waypoints)):
@@ -228,13 +265,15 @@ class SteeringSupervisor:
                 if not isinstance(direction, str) or direction not in self.DIRECTIONS:
                     return reply(False, "Invalid steering direction")
                 if not self._ready(self.clock()):
-                    return reply(False, "Fresh pose/map and enabled exploration waypoints are required")
+                    return reply(False, "Fresh pose/map, exploration inputs, and enabled autonomy are required")
                 dx, dy = self.DIRECTIONS[direction]
                 c, s = math.cos(self.yaw), math.sin(self.yaw)
                 world = (c*dx-s*dy, s*dx+c*dy)
                 target = self._target(world)
                 if target is None:
                     return reply(False, "Insufficient configured space for the steering lookahead")
+                if self.autonomy_provider is not None:
+                    self.autonomy_provider.interrupt()
                 self.lease = {"id": secrets.token_urlsafe(18), "owner": owner_id, "request_id": request,
                               "direction": world, "expires": self.clock()+self.ttl, "seq": 0}
                 self.mode, self.reason = "steering", "Operator steering active"
