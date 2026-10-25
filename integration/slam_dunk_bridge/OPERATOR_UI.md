@@ -22,6 +22,14 @@ space accepts manual targets. Reset clears the survey; switching environments
 starts a new run. Direct links use `/?environment=A` (or B/C). These are synthetic
 range-sensor tests; full geometry and full-scene POV are not shown in the dashboard.
 
+Click the main 3D map or the local top view to select a goal (observed free space
+only in unknown environments). Hold **Turn left / Turn right** or **Q / E** to
+rotate in place. Releasing a turn holds position for 0.5 seconds, then resumes
+the selected goal or autonomous exploration. Another turn restarts the delay;
+an expired turn lease also receives the delay. This is browser simulation yaw;
+the current live ROS supervisor does not advertise yaw control, so live turning
+buttons remain disabled.
+
 ## Furnished flight room (`/flight-room.html`)
 
 The furnished editor is a 32 × 24 m room with one drone, three interior partitions,

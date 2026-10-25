@@ -19,3 +19,5 @@ const {runBackupTests}=await import('./backup_integration.test.mjs');
 console.log('Combined Backup dashboard:',JSON.stringify(runBackupTests()));
 const {runUnknownTests}=await import('./unknown.test.mjs');
 console.log('Unknown environments and live mapping:',JSON.stringify(runUnknownTests()));
+const {runTurningTests}=await import('./turning.test.mjs');
+console.log('Manual turning and goal handoff:',JSON.stringify(runTurningTests()));

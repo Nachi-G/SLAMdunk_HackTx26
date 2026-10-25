@@ -13,7 +13,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   const removers = [], scenes = {};
   const pageEvents = doc.defaultView ?? globalThis;
   let topFollow = true, mainFollow = true, toastTimer = null, expanded = null;
-  let activePress = null, renewalTimer = null, showPlan = true, simulationView = 'map', editorTool = 'goal', selectedObject = null;
+  let activePress = null, renewalTimer = null, showPlan = true, simulationView = 'map', cameraView = 'pov', editorTool = 'goal', selectedObject = null;
   let environmentId='sandbox';
   function on(id,type,handler) { const el=typeof id==='string'?$(id):id;el.addEventListener(type,handler);removers.push(()=>el.removeEventListener(type,handler)); }
   function text(id,value) { $(id).textContent=String(value); }
@@ -92,7 +92,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     pressed('speed-slow',state.speedMode==='precision');pressed('speed-standard',state.speedMode==='standard');
     $('speed-slow').disabled=!demo;$('speed-standard').disabled=!demo;
     const canSteer=(demo||state.controlAvailable)&&!history&&!!state.pose&&!state.stale.pose&&!state.stale.map&&state.explorationMode!=='paused';
-    for(const button of doc.querySelectorAll('[data-direction]'))button.disabled=!canSteer;
+    for(const button of doc.querySelectorAll('[data-direction]'))button.disabled=!canSteer||!demo&&button.dataset.direction.startsWith('turn-');
     $('stop').disabled=history||!(demo||state.controlConnection==='connected'&&state.controlCapabilities?.pause);
     const paused=state.explorationMode==='paused';
     text('pause-label',paused?'RESUME':'PAUSE');$('stop').setAttribute('aria-label',paused?'Resume exploration':'Pause exploration');
@@ -107,6 +107,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     const target=state.command?.type==='move'&&['accepted','moving'].includes(state.command.phase)?state.command.target:null;
     const simulation=demo?adapter.getSimulation():null;
     const hidden=simulation?.hidden===true;
+    if(simulation?.handoffRemainingMs>0){text('exploration-mode','Manual turn handoff · 0.5 s');text('command-status','Turn released · waiting 0.5 s before autonomous guidance');}
     $('planner-panel').hidden=!demo||hidden;
     $('environment-panel').hidden=!demo;
     $('environment').value=environmentId;
@@ -118,7 +119,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
       $('survey-progress').style.width=`${simulation.coverage*100}%`;
       $('begin-exploration').disabled=simulation.started;text('begin-exploration',simulation.started?'Exploration started':'Begin exploration ▶');
       text('data-title',`${simulation.name} · discovering the environment`);text('data-note','The map is built from occluded range scans. Dark space has not been observed.');
-      text('exploration-mode',state.explorationMode==='paused'?'Exploration paused':simulation.started?'Frontier exploration':'Ready to explore');
+      text('exploration-mode',state.explorationMode==='paused'?'Exploration paused':state.steering?.yawRate?'Manual turn':simulation.handoffRemainingMs>0?'Manual turn handoff · 0.5 s':simulation.started?'Frontier exploration':'Ready to explore');
       text('command-status',simulation.status);text('control-help','Hold to guide through observed free space. Release to explore.');
       text('scene-state',`MAPPING UNKNOWN ${simulation.environment}`);
       $('empty-state').hidden=simulation.observedCells>0;
@@ -132,31 +133,37 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
       text('exploration-unknown',exploration.unknown_voxels);text('exploration-scope',exploration.completion_scope);
     }
     $('simulation-views').hidden=!demo;
-    const isPov=demo&&!hidden&&simulationView==='pov';
-    $('view-pov').hidden=hidden;
+    const isPov=demo&&!hidden&&cameraView==='pov';
+    $('view-pov').hidden=!demo||hidden;
+    pressed('view-pov',isPov);$('view-pov').classList.toggle('selected',isPov);
+    pressed('view-rgb',!isPov);$('view-rgb').classList.toggle('selected',!isPov);
     text('view-arena',hidden?'Survey 2D':'Build arena');
-    $('main-canvas-wrap').classList.toggle('pov-mode',isPov);
-    text('viewer-kind',hidden?'OBSERVED FREE SPACE / OCCUPIED POINTS':isPov?'SIMULATED CAMERA':demo&&simulationView==='arena'?'CLICK TO EDIT':'OCCUPIED GEOMETRY');
+    text('viewer-kind',hidden?'OBSERVED FREE SPACE / OCCUPIED POINTS':demo&&simulationView==='arena'?'CLICK TO EDIT':'OCCUPIED GEOMETRY');
     $('main-canvas').setAttribute('aria-label',demo&&simulationView==='arena'?'Arena editor. Click to use the selected goal or obstacle tool. Drag to pan; scroll to zoom.':'Interactive three dimensional map. Drag to orbit; scroll to zoom.');
-    $('pov-canvas').hidden=!isPov;$('pov-label').hidden=!isPov;$('main-canvas').hidden=isPov;
-    $('main-follow').disabled=isPov;$('main-fit').disabled=isPov;
-    text('viewer-title',hidden?`${simulation.name} · observed map`:isPov?'Drone POV':demo&&simulationView==='arena'?'Build your obstacle course':'Live 3D environment');
-    text('viewer-hint',hidden?'SENSOR OBSERVATIONS ONLY · DARK SPACE IS UNKNOWN':isPov?'SIMULATED POV · SPACE TO PAUSE':demo&&simulationView==='arena'?'CLICK TO EDIT · DRAG TO PAN · SCROLL TO ZOOM':'DRAG TO ORBIT · SCROLL TO ZOOM');
-    for(const [id,view]of [['view-pov','pov'],['view-arena','arena'],['view-map','map']]){pressed(id,simulationView===view);$(id).classList.toggle('selected',simulationView===view);}
+    $('pov-canvas').hidden=!isPov;$('pov-label').hidden=!isPov;$('main-canvas').hidden=false;
+    $('main-follow').disabled=false;$('main-fit').disabled=false;
+    text('viewer-title',hidden?simulation.name+' · observed map':demo&&simulationView==='arena'?'Build your obstacle course':'Live 3D environment');
+    text('viewer-hint',hidden?'SENSOR OBSERVATIONS ONLY · DARK SPACE IS UNKNOWN':demo&&simulationView==='arena'?'CLICK TO EDIT · DRAG TO PAN · SCROLL TO ZOOM':'DRAG TO ORBIT · SCROLL TO ZOOM');
+    for(const [id,view]of [['view-arena','arena'],['view-map','map']]){pressed(id,simulationView===view);$(id).classList.toggle('selected',simulationView===view);}
     const selectedActor=selectedObject?.kind==='moving'?simulation?.movers.find(o=>o.id===selectedObject.id):null;
     const selectedBox=selectedObject?.kind==='static'?simulation?.placed.find(r=>r.every((v,i)=>v===selectedObject.box[i])):null;
     if(!selectedActor&&!selectedBox)selectedObject=null;
     $('selected-object').hidden=!selectedObject;
     text('selected-object-label',selectedActor?`Selected ${selectedActor.id}`:'Selected static object');
     for(const axis of ['x','y'])pressed('selected-motion-'+axis,selectedActor?.axis===axis);
-    if(simulation){text('obstacle-count',`${simulation.objectCount} / 24`);if(isPov)pov.setData(simulation);}
+    if(simulation){text('obstacle-count',`${simulation.objectCount} / 24`);if(isPov&&!history&&!doc.hidden)pov.setData(simulation);}
 
     if(simulation&&!hidden){text('planner-status',simulation.status);text('planner-clearance',`${simulation.clearance.toFixed(2)} m`);text('planner-count',`${simulation.plans} / ${simulation.completed}`);}
     const overlay=simulation?{planned:showPlan?simulation.path:[],movers:simulation.movers,goal:simulation.goal,predictions:simulation.predictions,heat:showPlan,selectedId:selectedActor?.id,selectedBox,freeCells:simulation.freeCells??[],cellSize:simulation.cellSize,margin:state.profile.inflation_hgp+state.profile.dyn_base_inflation_m+simulation.bodyRadius}:{goal:exploration?.goal??null};
     scenes.top.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,placed:simulation?.placed??[],staticMargin:state.profile.inflation_hgp+.24,...overlay});
     scenes.main.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,placed:simulation?.placed??[],staticMargin:state.profile.inflation_hgp+.24,...overlay});
     scenes.history.setData({points:display.combinedPoints,pose:display.pose,trail:display.trail,target:null});
-    camera.setVisible(!history&&!doc.hidden);
+    camera.setVisible(!isPov&&!history&&!doc.hidden);
+    if(isPov){
+      $('camera-image').hidden=true;$('camera-empty').hidden=true;
+      text('camera-state','DRONE POV · SIMULATED');
+      text('camera-note','Live first-person simulation · follows NX01 as it flies.');
+    }
     const frames=state.history,min=frames[0]?.timestamp??0,max=frames.at(-1)?.timestamp??1,selected=state.selectedTime??max;
     $('timeline').min=String(min);$('timeline').max=String(Math.max(min+1,max));$('timeline').value=String(selected);$('timeline').disabled=frames.length<2;
     text('replay-time',formatTime((selected-min)/1000));text('history-duration',`${formatTime((max-min)/1000)} recorded`);
@@ -212,7 +219,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     if(result.ok){selectedObject={kind:'moving',id:result.id};toast(`Object moving along ${axis.toUpperCase()}`);}else toast(result.reason);
     store.tick(Date.now());
   });
-  on('view-pov','click',()=>applySimulationView('pov'));on('view-arena','click',()=>applySimulationView('arena'));on('view-map','click',()=>applySimulationView('map'));
+  on('view-pov','click',()=>{cameraView='pov';store.tick(Date.now());});on('view-rgb','click',()=>{cameraView='rgb';store.tick(Date.now());});on('view-arena','click',()=>applySimulationView('arena'));on('view-map','click',()=>applySimulationView('map'));
   on('clear-obstacles','click',()=>{const result=adapter.editSimulation('clear');toast(result.ok?'Added obstacles cleared':result.reason);store.tick(Date.now());});
   function sendGoal(point){
     if(store.getState().source!=='demo'){toast('Target selection is available in simulation mode');return;}
@@ -253,7 +260,15 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     });
     on(button,'blur',()=>{if(activePress?.button===button)releasePress('button lost focus');});
   }
-  const visibility=()=>{if(doc.hidden)releasePress('page hidden');camera.setVisible(store.getState().view==='live'&&!doc.hidden);};
+  const turnKeys={q:'turn-left',e:'turn-right'};
+  on(doc,'keydown',event=>{
+    if(['INPUT','SELECT','TEXTAREA','BUTTON','SUMMARY'].includes(event.target?.tagName)||event.ctrlKey||event.metaKey||event.altKey)return;
+    const key=event.key?.toLowerCase(),direction=turnKeys[key];if(!direction)return;
+    const button=[...doc.querySelectorAll('[data-direction]')].find(b=>b.dataset.direction===direction);
+    if(!button||button.disabled)return;event.preventDefault();if(!event.repeat)beginPress(button,'turn-key',key);
+  });
+  on(doc,'keyup',event=>{if(activePress?.kind==='turn-key'&&activePress.id===event.key?.toLowerCase()){event.preventDefault();releasePress('turn key released');}});
+  const visibility=()=>{if(doc.hidden)releasePress('page hidden');store.tick(Date.now());};
   on(doc,'visibilitychange',visibility);
   if(typeof pageEvents.addEventListener==='function'){
     on(pageEvents,'blur',()=>releasePress('window lost focus'));
@@ -265,7 +280,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     const result=store.getState().explorationMode==='paused'?adapter.resumeExploration():adapter.pauseExploration();
     if(!result.ok)toast(result.reason);
   });
-  on('camera-form','submit',event=>{event.preventDefault();if(!camera.connect($('camera-url').value))toast('Use an HTTP or HTTPS camera stream URL without embedded credentials.');});
+  on('camera-form','submit',event=>{event.preventDefault();if(!camera.connect($('camera-url').value))toast('Use an HTTP or HTTPS camera stream URL without embedded credentials.');else{cameraView='rgb';store.tick(Date.now());}});
   on('camera-disconnect','click',()=>camera.disconnect());
   on('margin','input',()=>adapter.setProfile(Number($('margin').value)));
   on('speed-slow','click',()=>adapter.setSpeedMode('precision'));on('speed-standard','click',()=>adapter.setSpeedMode('standard'));
@@ -283,7 +298,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   on('main-fullscreen','click',()=>expand('main-viewer-panel'));on('history-fullscreen','click',()=>expand('history-viewer-panel'));
   on('camera-fullscreen','click',()=>expand('camera-view'));
   const keyHandler=event=>{if(event.key==='Escape'&&expanded){expanded.classList.remove('expanded');expanded=null;}};doc.addEventListener('keydown',keyHandler);removers.push(()=>doc.removeEventListener('keydown',keyHandler));
-  if(autoStart){connectSource(settings.get('source')==='live'?'live':'demo');const url=settings.get('camera');if(url){$('camera-url').value=url;if(!camera.connect(url))toast('Invalid camera stream URL');}}
+  if(autoStart){connectSource(settings.get('source')==='live'?'live':'demo');const url=settings.get('camera');if(url){$('camera-url').value=url;if(!camera.connect(url))toast('Invalid camera stream URL');else{cameraView='rgb';store.tick(Date.now());}}}
   return Object.freeze({store,adapter,scenes,camera,destroy(){releasePress('dashboard destroyed');unsubscribe();adapter.dispose();camera.destroy();pov.destroy();clearTimeout(toastTimer);for(const remove of removers)remove();for(const scene of Object.values(scenes))scene.destroy();expanded?.classList.remove('expanded');}});
 }
 

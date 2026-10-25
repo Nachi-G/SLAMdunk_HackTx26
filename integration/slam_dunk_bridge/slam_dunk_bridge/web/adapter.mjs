@@ -19,7 +19,7 @@ export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSock
   function releaseSteering(reason='released') {
     const active=held;held=null;
     if(store.getState().source==='demo'){
-      const result=store.releaseSteering(reason);if(active)demo?.clearManual();return result;
+      if(active)demo?.clearManual({phase:'release',direction:active.direction,now:clock()});return store.releaseSteering(reason);
     }
     if(!active)return {ok:true};
     // Cancel the original request when release occurs before its lease ack.
@@ -96,7 +96,7 @@ export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSock
       if(releasePending)return {ok:false,reason:'Waiting for steering release acknowledgment'};
       if(store.getState().source==='demo'){
         if((room||demo?.snapshot().hidden)&&!demo?.snapshot().started)return {ok:false,reason:'Click Start before pushing the drone'};
-        const result=store.startSteering(direction,clock());if(result.ok){held={requestId:result.steering.leaseId};demo?.clearManual();}return result;
+        const result=store.startSteering(direction,clock());if(result.ok){held={requestId:result.steering.leaseId,direction};demo?.clearManual({phase:'start',direction,now:clock()});}return result;
       }
       const s=store.getState();
       if(!['forward','backward','left','right','up','down'].includes(direction))return {ok:false,reason:'Unknown direction'};

@@ -27,6 +27,7 @@ export function createUnknownDemo(store,id='A'){
   const truth=[...SHELL,...world.walls],grid=new Uint8Array(NX*NY); // 0 unknown, 1 free, 2 occupied
   let position=[...world.spawn],yaw=0,started=false,last=null,simTime=0,lastScan=-Infinity,lastPlan=-Infinity,lastMap=-Infinity,revision=0;
   let route=[],target=null,manualTarget=false,plans=0,completed=0,state='ready',status='Unknown environment · click Begin exploration';
+  let resumeAfter=0,wasTurning=false,turnExpiresAt=0;
   let visibleActors=[],hits=[],freeCells=[],observedPoints=[],frontiers=0,observed=0,scanSequence=0,emptyScans=0,bestDistance=Infinity,progressAt=0;
   const failed=new Map(),visits=new Uint16Array(grid.length);
   const actorClocks=world.actors.map(()=>0);
@@ -94,8 +95,8 @@ export function createUnknownDemo(store,id='A'){
     lastPlan=simTime;plans++;const search=reachable();
     if(manualTarget&&target){
       const [x,y]=cell(target),k=index(x,y);
-      if(search.parent.has(k)){route=routeTo(k,search);if(knownSegment(route.at(-1)??position,target))route.push([...target]);state='exploring';status='Navigating through observed free space';return;}
-      manualTarget=false;target=null;
+      if(search.parent.has(k)){route=routeTo(k,search);if(knownSegment(route.at(-1)??position,target))route.push([...target]);bestDistance=Infinity;progressAt=simTime;state='exploring';status='Navigating through observed free space';return;}
+      route=[];state='blocked';status='Selected goal is temporarily unreachable · waiting to replan';return;
     }
     let best=null,bestScore=-Infinity;
     for(const k of search.queue){
@@ -117,19 +118,26 @@ export function createUnknownDemo(store,id='A'){
   }
   function step(now){
     if(!Number.isFinite(now)||now<=0||last!==null&&now<=last||store.getState().source!=='demo')return false;
+    store.tick(now);
     const dt=last===null?0:Math.min(.25,(now-last)/1000);last=now;
     const s=store.getState(),paused=s.explorationMode==='paused';let velocity=[0,0,0];
+    if(wasTurning&&!s.steering?.yawRate)resumeAfter=Math.max(resumeAfter,Math.min(now,turnExpiresAt)+500);
+    wasTurning=!!s.steering?.yawRate;if(wasTurning)turnExpiresAt=s.steering.expiresAt;
     if(started&&!paused){
       motionBefore=actorsAt();const proposed=actorsAt(dt);
       // Match the existing synthetic demo: actors yield at the vehicle boundary.
       for(let i=0;i<actorClocks.length;i++)if(sweptDistance(position,position,motionBefore[i].position,proposed[i].position)>=radius()+.5+s.profile.dyn_base_inflation_m+.04&&!truth.some(box=>rectDistance(proposed[i].position,box)<.55))actorClocks[i]+=dt;
       simTime+=dt;if(simTime-lastScan>=.3)scan();
       if(s.steering){
-        route=[];target=null;manualTarget=false;lastPlan=-Infinity;
+        route=[];if(!manualTarget)target=null;lastPlan=-Infinity;
+        if(s.steering.yawRate){yaw=Math.atan2(Math.sin(yaw+s.steering.yawRate*dt),Math.cos(yaw+s.steering.yawRate*dt));status='Manual turn · release for 0.5 s handoff';}
+        else {
         const next=position.map((v,i)=>v+s.steering.worldDirection[i]*s.speedLimit*.65*dt);
         if(safeMotion(position,next,dt)){velocity=next.map((v,i)=>(v-position[i])/Math.max(dt,.001));position=next;status='Manual guidance · observed free space only';}else status='Manual guidance blocked · unknown or occupied space';
+        }
+      }else if(now<resumeAfter){state='handoff';status='Manual turn released · autonomy resumes in 0.5 s';
       }else{
-        if(route.some(p=>!knownSafe(p))){route=[];target=null;manualTarget=false;}
+        if(route.some(p=>!knownSafe(p))){route=[];if(!manualTarget)target=null;}
         if(!route.length&&simTime-lastPlan>=1)plan();
         if(route.length){
           const nextPoint=route[0],distance=Math.hypot(nextPoint[0]-position[0],nextPoint[1]-position[1]),travel=Math.min(distance,s.speedLimit*.65*dt);
@@ -138,8 +146,8 @@ export function createUnknownDemo(store,id='A'){
           else status='Yielding · local obstacle or insufficient observed clearance';
           const remaining=target?Math.hypot(target[0]-position[0],target[1]-position[1]):0;
           if(remaining<bestDistance-.1){bestDistance=remaining;progressAt=simTime;}
-          if(simTime-progressAt>8){if(target){const [x,y]=cell(target);failed.set(index(x,y),simTime+15);}route=[];target=null;manualTarget=false;lastPlan=-Infinity;}
-          if(!route.length&&target){completed++;target=null;manualTarget=false;lastPlan=-Infinity;}
+          if(simTime-progressAt>8){if(target){const [x,y]=cell(target);failed.set(index(x,y),simTime+15);}route=[];if(!manualTarget)target=null;lastPlan=-Infinity;}
+          if(!route.length&&target&&remaining<.08){completed++;target=null;manualTarget=false;lastPlan=-Infinity;}
         }
       }
     }
@@ -150,7 +158,7 @@ export function createUnknownDemo(store,id='A'){
   }
   return Object.freeze({step,
     start(){started=true;state='exploring';status='Scanning surroundings · searching for frontiers';lastPlan=-Infinity;return {ok:true};},
-    clearManual(){route=[];target=null;manualTarget=false;lastPlan=-Infinity;return true;},
+    clearManual({phase,direction,now=last??0}={}){route=[];if(!manualTarget)target=null;lastPlan=-Infinity;if(phase==='start'){resumeAfter=0;wasTurning=false;}if(phase==='release'&&direction?.startsWith('turn-')){resumeAfter=now+500;wasTurning=false;}return true;},
     stop(){return store.pauseExploration();},
     setGoal(p){
       if(!started)return {ok:false,reason:'Begin exploration first'};
@@ -158,7 +166,7 @@ export function createUnknownDemo(store,id='A'){
       const [x,y]=cell(p),search=reachable(),k=index(x,y);if(!search.parent.has(k))return {ok:false,reason:'No route through observed free space'};
       target=[...p];manualTarget=true;route=routeTo(k,search);route.push([...p]);bestDistance=Infinity;progressAt=simTime;state='exploring';status='Navigating to observed target';return {ok:true};
     },
-    snapshot(){return {hidden:true,environment:id,name:world.name,challenge:world.challenge,room:false,bounds:[...BOUNDS],started,bodyRadius:.24,position:[...position],yaw,simTime,
+    snapshot(){return {handoffRemainingMs:Math.max(0,resumeAfter-(last??0)),hidden:true,environment:id,name:world.name,challenge:world.challenge,room:false,bounds:[...BOUNDS],started,bodyRadius:.24,position:[...position],yaw,simTime,
       path:route.length?[[...position],...route.map(p=>[...p])]:[],goal:target?[...target]:null,movers:visibleActors.map(o=>({...o,position:[...o.position]})),
       predictions:[],placed:[],obstacles:[],fixtures:[],objectCount:0,status:store.getState().explorationMode==='paused'?'Exploration paused':status,state,
       plans,completed,clearance:null,freeCells:freeCells.map(p=>[...p]),cellSize:RES,observedCells:observed,totalCells:grid.length,observedArea:observed*RES*RES,

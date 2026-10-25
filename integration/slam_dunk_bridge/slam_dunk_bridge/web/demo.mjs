@@ -8,6 +8,7 @@ export function createDemo(store,seed=26,{room=false}={}) {
   let obstacles=[...base],placed=[],geometry=geometryPoints(seed,base),moving=[],nextObject=1;
   let position=[...course[0]],index=1,target=null,activeCommand=null,paused=false,last=null,start=null,lastMap=-Infinity,revision=0,yaw=Math.PI/2,lastMessage=-Infinity;
   let started=!room;
+  let targetPinned=false,resumeAfter=0,wasTurning=false,turnExpiresAt=0;
   let path=[],segment=null,elapsed=0,simTime=0,lastPlan=-Infinity,plans=0,completed=0,status='Planning',lastProfile=null,wait=0;
   const bounds=room?ROOM_BOUNDS:[-13,-9,13,9];
   const amplitudeAt=(x,y,axis)=>Math.min(2.5,axis==='x'?Math.min(x-bounds[0],bounds[2]-x)-1.4:Math.min(y-bounds[1],bounds[3]-y)-1.4);
@@ -37,6 +38,8 @@ export function createDemo(store,seed=26,{room=false}={}) {
     store.tick(now);if(start===null)start=now;
     const dt=last===null?0:Math.min(.25,(now-last)/1000);last=now;
     const state=store.getState(),held=state.explorationMode==='steering'?state.steering:null,stopped=room&&!started||paused||state.explorationMode==='paused';
+    if(wasTurning&&!held?.yawRate)resumeAfter=Math.max(resumeAfter,Math.min(now,turnExpiresAt)+500);
+    wasTurning=!!held?.yawRate;if(wasTurning)turnExpiresAt=held.expiresAt;
     let velocity=[0,0,0];
     // Pause freezes the entire synthetic world, including patrols.
     if(!stopped){
@@ -50,8 +53,12 @@ export function createDemo(store,seed=26,{room=false}={}) {
       simTime+=dt;
       if(held){
         path=[];segment=null;lastPlan=-Infinity;
+        if(held.yawRate){yaw=Math.atan2(Math.sin(yaw+held.yawRate*dt),Math.cos(yaw+held.yawRate*dt));status='Manual turn · release for 0.5 s handoff';}
+        else {
         const next=position.map((v,i)=>v+held.worldDirection[i]*state.speedLimit*.65*dt);next[2]=Math.max(.5,Math.min(2.5,next[2]));
         if(movementFree(position,next,margin,base,dt)){velocity=next.map((v,i)=>(v-position[i])/Math.max(dt,.001));position=next;status='Steering · collision guard active';}else status='Steering blocked by clearance';
+        }
+      }else if(now<resumeAfter){status='Manual turn released · autonomy resumes in 0.5 s';
       }else if(!room||target){
         if(lastProfile!==`${state.profile.value}/${state.speedLimit}`||!path.length&&now/1000-lastPlan>1||now/1000-lastPlan>(room?.35:1)&&wait>.2)replan(state);
         if(path.length>1&&!segment){segment=cubicSegment(position,path[1],state.speedLimit*.65);elapsed=0;}
@@ -108,10 +115,10 @@ export function createDemo(store,seed=26,{room=false}={}) {
     },
     removeObstacle(point){if(!Array.isArray(point)||!point.slice(0,2).every(Number.isFinite))return {ok:false,reason:'Choose an obstacle'};const index=placed.findIndex(r=>rectDistance(point,r)<.35);if(index<0){const i=actors(simTime).slice(fixedActorCount).findIndex(o=>Math.hypot(point[0]-o.position[0],point[1]-o.position[1])<o.radius+.35);if(i<0)return {ok:false,reason:'Click an added object to remove it'};moving.splice(i,1);actorTimes.splice(fixedActorCount+i,1);actorRates.splice(fixedActorCount+i,1);}else placed.splice(index,1);changedScene();return {ok:true};},
     clearObstacles(){placed=[];moving=[];actorTimes.length=fixedActorCount;actorRates.length=fixedActorCount;changedScene();return {ok:true};},
-    snapshot(){return {room,bounds:[...bounds],fixtures:room?ROOM_FIXTURES.map(f=>({...f,rect:[...f.rect]})):[],started,bodyRadius,predictions:actors(simTime).map((o,i)=>Array.from({length:7},(_,k)=>actors(simTime+k*.3)[i].position)),objectCount:placed.length+moving.length,obstacles:obstacles.map(r=>[...r]),placed:placed.map(r=>[...r]),yaw,position:[...position],path:[position,...path.slice(1)],goal:goal()?[...goal()]:null,movers:actors(simTime),status:room&&!started?'Ready · click Start':status,plans,completed,clearance:clearance(position,simTime,true,actors,obstacles)-footprintPadding,simTime};},
-    setGoal(point){const s=store.getState();if(!Array.isArray(point)||point.length!==3||!point.every(Number.isFinite)||!free(point,s.profile.inflation_hgp+footprintPadding,simTime,false,0,actors,obstacles))return {ok:false,reason:'Goal is inside an obstacle or its clearance margin'};if(!planPath(position,point,s.profile.inflation_hgp+footprintPadding,simTime,s.profile.dyn_base_inflation_m,actors,obstacles).length)return {ok:false,reason:'No route at this clearance. Try another goal or reset.'};target=[...point];activeCommand=null;paused=false;path=[];lastPlan=-Infinity;return {ok:true};},
-    move(command){if(!command||command.type!=='move'||!Array.isArray(command.target)||command.target.length!==3||!command.target.every(Number.isFinite))return false;target=[...command.target];activeCommand=command.id;paused=false;path=[];lastPlan=-Infinity;return true;},
-    clearManual(){if(!room)target=null;activeCommand=null;paused=false;path=[];lastPlan=-Infinity;return true;},
-    stop(){paused=true;target=null;activeCommand=null;return true;}
+    snapshot(){return {handoffRemainingMs:Math.max(0,resumeAfter-(last??0)),room,bounds:[...bounds],fixtures:room?ROOM_FIXTURES.map(f=>({...f,rect:[...f.rect]})):[],started,bodyRadius,predictions:actors(simTime).map((o,i)=>Array.from({length:7},(_,k)=>actors(simTime+k*.3)[i].position)),objectCount:placed.length+moving.length,obstacles:obstacles.map(r=>[...r]),placed:placed.map(r=>[...r]),yaw,position:[...position],path:[position,...path.slice(1)],goal:goal()?[...goal()]:null,movers:actors(simTime),status:room&&!started?'Ready · click Start':status,plans,completed,clearance:clearance(position,simTime,true,actors,obstacles)-footprintPadding,simTime};},
+    setGoal(point){const s=store.getState();if(!Array.isArray(point)||point.length!==3||!point.every(Number.isFinite)||!free(point,s.profile.inflation_hgp+footprintPadding,simTime,false,0,actors,obstacles))return {ok:false,reason:'Goal is inside an obstacle or its clearance margin'};if(!planPath(position,point,s.profile.inflation_hgp+footprintPadding,simTime,s.profile.dyn_base_inflation_m,actors,obstacles).length)return {ok:false,reason:'No route at this clearance. Try another goal or reset.'};target=[...point];targetPinned=true;activeCommand=null;paused=false;path=[];lastPlan=-Infinity;return {ok:true};},
+    move(command){if(!command||command.type!=='move'||!Array.isArray(command.target)||command.target.length!==3||!command.target.every(Number.isFinite))return false;target=[...command.target];targetPinned=false;activeCommand=command.id;paused=false;path=[];lastPlan=-Infinity;return true;},
+    clearManual({phase,direction,now=last??0}={}){if(!room&&!targetPinned)target=null;activeCommand=null;paused=false;path=[];segment=null;lastPlan=-Infinity;if(phase==='start'){resumeAfter=0;wasTurning=false;}if(phase==='release'&&direction?.startsWith('turn-')){resumeAfter=now+500;wasTurning=false;}return true;},
+    stop(){paused=true;target=null;targetPinned=false;activeCommand=null;return true;}
   });
 }

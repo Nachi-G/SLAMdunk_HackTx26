@@ -94,7 +94,7 @@ export function runIntegrationTests() {
       assert.ok(get('detail-source').textContent.includes('Synthetic'));assert.equal(get('history-screen').hidden,true);
       for(let step=0;step<12;step++)env.advance(100+seed%17);
       assert.ok(get('main-canvas').context.metrics.points>0);assert.equal(get('site-canvas'),null);
-      assert.equal(get('camera-image').hidden,true);assert.ok(get('camera-note').textContent.includes('No RGB'));
+      assert.equal(get('camera-image').hidden,true);assert.ok(get('camera-note').textContent.includes('Live first-person simulation'));
       assert.ok(get('battery').textContent.endsWith('%'));assert.notEqual(get('flight-time').textContent,'—');
       const margin=seed%101;get('margin').value=String(margin);get('margin').fire('input');
       assert.equal(app.store.getState().profile.value,margin);
@@ -211,7 +211,7 @@ export function runObstacleLabTests(){
   try{
     app=mountDashboard({document:doc});env.advance(100);
     assert.equal(get('planner-panel').hidden,false);
-    assert.equal(get('pov-canvas').hidden,true);
+    assert.equal(get('pov-canvas').hidden,false);
     get('obstacle-kind').value='crate';
     get('tool-add').click();assert.equal(get('main-canvas').hidden,false);assert.equal(get('view-arena').getAttribute('aria-pressed'),'true');
     const point={clientX:331.05,clientY:165.79,pointerId:12,button:0};
@@ -221,7 +221,7 @@ export function runObstacleLabTests(){
     assert.equal(app.adapter.getSimulation().placed.length,0);
     get('tool-add').click();get('top-canvas').fire('pointerdown',point);get('top-canvas').fire('pointerup',point);
     get('clear-obstacles').click();assert.equal(app.adapter.getSimulation().placed.length,0);
-    get('tool-goal').click();get('view-pov').click();assert.equal(get('pov-canvas').hidden,false);assert.equal(get('main-canvas').hidden,true);
+    get('tool-goal').click();get('view-pov').click();assert.equal(get('pov-canvas').hidden,false);assert.equal(get('main-canvas').hidden,false);
 
     get('mission-goal').value='2';get('send-goal').click();env.advance(100);
     assert.deepEqual(app.adapter.getSimulation().goal,[1,7,1.8]);

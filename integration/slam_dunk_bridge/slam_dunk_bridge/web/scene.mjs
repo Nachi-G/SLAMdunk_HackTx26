@@ -164,7 +164,7 @@ export function createScene(canvas, options = {}) {
     listen('pointermove',event=>{if(!drag)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(drag.pan){const scale=distance/Math.max(1,Math.min(width,height));center[0]-=dx*scale;center[1]+=dy*scale;}else{azimuth-=dx*.008;elevation=Math.max(.12,Math.min(1.5,elevation+dy*.008));}drag.x=event.clientX;drag.y=event.clientY;follow=false;options.onFollowChange?.(false);dirty=true;});
     listen('dblclick',event=>{if(mode!=='top'||!options.onGoal)return;const rect=canvas.getBoundingClientRect(),scale=Math.min(width,height)/distance;options.onGoal([center[0]+(event.clientX-(rect.left??0)-width/2)/scale,center[1]-(event.clientY-(rect.top??0)-height/2)/scale,data.pose?.position[2]??1.8]);});
     listen('pointerup',event=>{
-      if(drag&&(mode==='top'||data.room)&&options.onMapClick&&Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<5){const p=pick(event,0);if(p)options.onMapClick([p[0],p[1],data.pose?.position[2]??1.8],pickObject(event));}
+      if(drag&&options.onMapClick&&Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<5){const p=pick(event,0);if(p)options.onMapClick([p[0],p[1],data.pose?.position[2]??1.8],pickObject(event));}
       endDrag();
     });listen('pointercancel',endDrag);listen('lostpointercapture',endDrag);
     listen('wheel',event=>{autoFit=false;event.preventDefault();distance=Math.max(3,Math.min(1200,distance*Math.exp(Math.max(-200,Math.min(200,event.deltaY))*.002)));dirty=true;},{passive:false});

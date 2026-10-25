@@ -8,7 +8,20 @@ export function runBackupTests(){
   try{
     app=mountDashboard({document:doc});env.advance(100);
     assert.equal(get('main-canvas').hidden,false,'Nachi map is the default view');
-    assert.equal(get('pov-canvas').hidden,true);
+    assert.equal(get('pov-canvas').hidden,false,'Drone POV runs in the camera panel');
+    get('view-arena').click();
+    assert.equal(get('pov-canvas').hidden,false,'editing the map keeps the camera running');
+    get('view-rgb').click();assert.equal(get('pov-canvas').hidden,true);
+    get('view-pov').click();assert.equal(get('pov-canvas').hidden,false);
+    assert.equal(get('main-canvas').hidden,false,'camera modes never replace the map');
+    assert.equal(get('camera-state').textContent,'DRONE POV · SIMULATED');
+    get('camera-url').value='http://robot:8081/stream';get('camera-form').fire('submit');
+    assert.equal(get('pov-canvas').hidden,true,'connecting RGB selects the stream');
+    assert.equal(get('camera-image').hidden,false);
+    get('view-pov').click();assert.equal(get('camera-image').hidden,true);
+    get('view-rgb').click();assert.equal(get('camera-image').src,'http://robot:8081/stream');
+    assert.equal(get('main-canvas').hidden,false);
+    get('view-pov').click();
     get('tool-add').click();get('obstacle-kind').value='moving';get('movement-axis').value='x';
     const click=p=>{const q=app.scenes.main.project(p),e={clientX:q[0],clientY:q[1],pointerId:91,button:0};get('main-canvas').fire('pointerdown',e);get('main-canvas').fire('pointerup',e);};
     click([-8.5,-2,0]);

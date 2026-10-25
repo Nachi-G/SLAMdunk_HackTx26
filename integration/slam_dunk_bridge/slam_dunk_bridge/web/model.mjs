@@ -153,12 +153,12 @@ export class MissionStore {
     return true;
   }
   startSteering(direction,now=Date.now()) {
-    const directions={forward:[1,0,0],backward:[-1,0,0],left:[0,1,0],right:[0,-1,0],up:[0,0,1],down:[0,0,-1]};
+    const directions={forward:[1,0,0],backward:[-1,0,0],left:[0,1,0],right:[0,-1,0],up:[0,0,1],down:[0,0,-1],'turn-left':[0,0,0],'turn-right':[0,0,0]};
     const s=this.state;
     const reason=typeof direction!=='string'||!Object.hasOwn(directions,direction)?'Unknown direction':!finite(now)?'Invalid command time':s.source!=='demo'?'Live steering requires the command gateway':s.view!=='live'?'Return to Live to steer':s.explorationMode==='paused'?'Resume exploration before steering':s.steering?'A steering direction is already held':!s.pose||s.stale.pose||s.stale.map?'Fresh map and pose required':null;
     if(reason)return {ok:false,reason};
     const [dx,dy,dz]=directions[direction],c=Math.cos(s.pose.yaw),sn=Math.sin(s.pose.yaw),epoch=s.controlEpoch+1;
-    const steering=Object.freeze({leaseId:`demo-${++this.sequence}`,direction,epoch,expiresAt:now+500,worldDirection:frozenVector([c*dx-sn*dy,sn*dx+c*dy,dz])});
+    const steering=Object.freeze({leaseId:`demo-${++this.sequence}`,direction,epoch,expiresAt:now+500,worldDirection:frozenVector([c*dx-sn*dy,sn*dx+c*dy,dz]),yawRate:direction==='turn-left'?Math.PI/2:direction==='turn-right'?-Math.PI/2:0});
     this._emit({steering,controlEpoch:epoch,explorationMode:'steering',command:Object.freeze({type:'steer',direction,phase:'steering',message:`Steering ${direction} · release to explore`})});
     return {ok:true,steering};
   }
