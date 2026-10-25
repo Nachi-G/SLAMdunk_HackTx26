@@ -5,6 +5,7 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
   if(!store||typeof store.ingest!=='function'||typeof clock!=='function'||typeof schedule!=='function'||typeof cancel!=='function')throw new TypeError('Adapter requires store, clock and timer functions');
   let timer=null,socket=null,controlSocket=null,demo=null,generation=0,controlGeneration=0,retryAt=null,liveUrl=null;
   let held=null,sequence=0,controlStatusAt=null,lastControlStatus=null,releasePending=false;
+  let controlUrl=null,controlRetryAt=null,pendingNavigation=null,pendingMission=null,missionRequest=null;
   const prefix=globalThis.crypto?.randomUUID?.()??`${clock()}-${Math.random().toString(36).slice(2)}`;
   const requestId=()=>`${prefix}-${++sequence}`;
   const validUrl=(url,path)=>{
@@ -32,7 +33,7 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
     return {ok,reason:ok?reason:'Control connection lost; backend lease expires'};
   }
   const closeControl=()=>{
-    releaseSteering('Control disconnected');controlGeneration++;
+    releaseSteering('Control disconnected');controlGeneration++;controlUrl=null;controlRetryAt=null;pendingNavigation=null;pendingMission=null;missionRequest=null;
     if(controlSocket){const old=controlSocket;controlSocket=null;old.onopen=old.onmessage=old.onclose=old.onerror=null;old.close();}
     controlStatusAt=null;lastControlStatus=null;held=null;releasePending=false;
   };
@@ -59,6 +60,7 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
   };
   const tick=()=>{
     const now=clock();demo?.step(now);store.tick(now);
+    if(controlRetryAt!==null&&now>=controlRetryAt&&controlUrl&&store.getState().source==='live'){const retryUrl=controlUrl;controlRetryAt=null;adapter.connectControl(retryUrl);}
     if(held&&store.getState().source==='demo'&&!store.getState().steering)held=null;
     if(retryAt!==null&&now>=retryAt){retryAt=null;store.setConnection('connecting');open();}
     if(controlStatusAt!==null&&now-controlStatusAt>1500){releaseSteering('Control status timed out');controlSocket?.close();store.setControlConnection('disconnected');controlStatusAt=null;}
@@ -73,8 +75,8 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
     },
     connectControl(url){
       const parsed=validUrl(url,'/control');if(!parsed||typeof WebSocketImpl!=='function'||store.getState().source!=='live')return false;
-      closeControl();const current=controlGeneration;store.setControlConnection('connecting');
-      try{controlSocket=new WebSocketImpl(parsed);}catch{store.setControlConnection('disconnected');return false;}
+      closeControl();controlUrl=parsed;const current=controlGeneration;store.setControlConnection('connecting');
+      try{controlSocket=new WebSocketImpl(parsed);}catch{store.setControlConnection('disconnected');controlRetryAt=clock()+1500;return false;}
       const active=controlSocket;
       active.onopen=()=>{if(current===controlGeneration&&controlSocket===active){store.setControlConnection('connected');controlStatusAt=clock();}};
       active.onmessage=e=>{
@@ -82,13 +84,34 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
         let message;try{if(typeof e.data!=='string'||e.data.length>16384)return;message=JSON.parse(e.data);}catch{return;}
         if(!store.ingestControl(message))return;
         controlStatusAt=clock();lastControlStatus=message;
+        if(pendingNavigation&&message.last_request_id===pendingNavigation&&typeof message.accepted==='boolean'){
+          store._emit({navigationAck:{requestId:pendingNavigation,accepted:message.accepted,reason:message.reason,retryable:message.retryable===true,destination:Array.isArray(message.destination)&&message.destination.length===2&&message.destination.every(Number.isFinite)?message.destination:null}});pendingNavigation=null;
+        }
         if(releasePending&&message.mode!=='steering')releasePending=false;
+        if(missionRequest&&message.last_request_id===missionRequest&&typeof message.accepted==='boolean'){
+          missionRequest=null;store._emit({missionPending:false,missionAck:{accepted:message.accepted,reason:message.reason,destination:message.destination??null}});
+        }
         if(held&&message.active_request_id===held.requestId&&message.mode==='steering'&&message.lease_id){held.leaseId=message.lease_id;held.epoch=message.epoch;}
         if(held&&message.last_request_id===held.requestId&&message.accepted===false)held=null;
         if(held&&held.leaseId&&(message.epoch!==held.epoch||message.mode!=='steering'||message.lease_id!==held.leaseId))held=null;
+        if(pendingMission&&!pendingNavigation&&!releasePending&&!held){const action=pendingMission;pendingMission=null;adapter.mission(action);}
       };
-      active.onclose=()=>{if(current!==controlGeneration||controlSocket!==active)return;held=null;releasePending=false;controlSocket=null;controlStatusAt=null;lastControlStatus=null;store.setControlConnection('disconnected');};
+      active.onclose=()=>{if(current!==controlGeneration||controlSocket!==active)return;held=null;releasePending=false;controlSocket=null;controlStatusAt=null;lastControlStatus=null;controlRetryAt=clock()+1500;store.setControlConnection('disconnected');};
       active.onerror=()=>{if(current===controlGeneration&&controlSocket===active)active.close();};return true;
+    },
+    mission(action){
+      const s=store.getState();
+      if(!['start','return_home'].includes(action)||s.source!=='live'||s.view!=='live'||s.connection!=='connected'||s.controlConnection!=='connected'||!(action==='start'?s.missionStartReady:s.missionReturnReady))return {ok:false,reason:'Mission action unavailable; check controller readiness'};
+      if(missionRequest)return {ok:false,reason:'Waiting for mission acknowledgement'};
+      if(held){pendingMission=action;store._emit({missionPending:true});releaseSteering('Mission command requested');return {ok:true,pending:true};}
+      if(pendingNavigation||releasePending){pendingMission=action;store._emit({missionPending:true});return {ok:true,pending:true};}
+      missionRequest=requestId();const ok=send({type:action,request_id:missionRequest,epoch:s.controlEpoch});if(!ok)missionRequest=null;store._emit({missionPending:ok});return {ok};
+    },
+    navigate(position){
+      const s=store.getState();
+      if(s.source!=='live'||s.view!=='live'||!s.navigationReady||s.stale.pose||s.stale.map||s.connection!=='connected'||held||releasePending||pendingMission||missionRequest)return {ok:false,reason:'Wait for fresh navigation and release manual steering first'};
+      if(!Array.isArray(position)||position.length!==2||!position.every(Number.isFinite))return {ok:false,reason:'Invalid pinpoint'};
+      pendingNavigation=requestId();const ok=send({type:'navigate',request_id:pendingNavigation,epoch:s.controlEpoch,position});if(!ok)pendingNavigation=null;return {ok};
     },
     startSteering(direction){
       if(held)return {ok:false,reason:'A steering direction is already held'};

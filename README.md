@@ -13,3 +13,7 @@ Start with the [sensor and reconstruction audit](docs/sando-sensor-reconstructio
 The [operator dashboard](integration/slam_dunk_bridge/OPERATOR_UI.md) provides Live/History screens, a configurable RGB camera panel, and held steering. Follow the [SANDO control setup](integration/slam_dunk_bridge/SANDO_CONTROL.md) for the optional leased mission supervisor; the [physical Stop/Hold design](docs/operator-push-stop-ros-design.md) remains separate work. Validation and runtime limits are recorded in the [test report](integration/slam_dunk_bridge/test/UI_TEST_REPORT.md).
 
 The opt-in [continuous frontier explorer](integration/slam_dunk_bridge/EXPLORATION.md) uses persistent raw-sensor voxel evidence to select new SANDO destinations until reachable frontiers are exhausted within configured mission bounds. It supports horizontal or 3D exploration, bounded retries, completion confirmation, and manual steering handoff. Live ROS/Gazebo flight validation remains required.
+
+## PX4 / Harmonic forest runtime
+
+The [PX4 X500 forest runtime](simulation/px4_harmonic/README.md) adds the Jazzy/Harmonic moving-obstacle demonstration and connects this dashboard to PX4, with Start, Return Home, held steering, pinned destinations, projected paths, and measured speed. It uses simulator ground truth; full live-LiDAR SANDO flight remains separate integration work.

@@ -1,0 +1,14 @@
+# Only use with diagnostics/test_ros_lidar.sh's isolated Gazebo partition.
+- ros_topic_name: /sando_perception/lidar/points_raw
+  gz_topic_name: /sando/lidar/scan/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+  lazy: false
+  publisher_queue: 5
+- ros_topic_name: /sando_perception/test_clock
+  gz_topic_name: /world/sando_lidar_test/clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: gz.msgs.Clock
+  direction: GZ_TO_ROS
+  lazy: false

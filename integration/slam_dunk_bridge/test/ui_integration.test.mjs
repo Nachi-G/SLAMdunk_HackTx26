@@ -121,7 +121,7 @@ export function runIntegrationTests() {
       const stamp={sec:1000+seed,nanosec:0};
       socket.message({protocol_version:1,type:'pose',frame_id:'map',stamp,position:[seed/10,-2,1],orientation:[0,0,0,1]});
       socket.message({protocol_version:1,type:'map',frame_id:'map',stamp,operation:'replace',revision:1,points:[[0,0,0],[1,1,2]]});
-      assert.equal(get('battery').textContent,'—');assert.equal(get('speed').textContent,'—');assert.equal(get('flight-time').textContent,'—');
+      assert.equal(get('battery').textContent,'97%');assert.equal(get('speed').textContent,'—');assert.equal(get('flight-time').textContent,'—');
       assert.ok(get('profile-status').textContent.includes('proposal'));assert.equal(app.store.getState().connection,'connected');
       socket.message('{invalid');assert.ok(app.store.getState().rejected>0);
       socket.message({protocol_version:1,type:'map',frame_id:'map',stamp:{sec:stamp.sec+1,nanosec:0},operation:'replace',revision:2,points:[]});
@@ -202,3 +202,90 @@ export function runIntegrationTests() {
 }
 
 if(import.meta.url===new URL(process.argv[1],'file:///').href)console.log(JSON.stringify(runIntegrationTests(),null,2));
+
+export function runPinInteractionTests(){
+  const results=[];
+  for(const canvasId of ['top-canvas','main-canvas']){
+    const env=environment(0),doc=markup(),get=id=>doc.getElementById(id);let app;
+    try{
+      app=mountDashboard({document:doc,autoStart:false});
+      app.adapter.connectLive('ws://localhost:8765/stream');const telemetry=env.Socket.instances.at(-1);telemetry.open();
+      const stamp={sec:1700000000,nanosec:0};
+      telemetry.message({type:'pose',protocol_version:1,frame_id:'gazebo_world',stamp,position:[0,0,2],orientation:[0,0,0,1]});
+      telemetry.message({type:'map',protocol_version:1,frame_id:'gazebo_world',stamp,operation:'replace',revision:1,points:[[3,3,2]]});
+      app.adapter.connectControl('ws://localhost:8766/control');const control=env.Socket.instances.at(-1);control.open();
+      control.message({type:'control_status',protocol_version:1,epoch:0,mode:'waiting',ready:false,navigation_ready:true,lease_id:null,reason:'Preparing flight',ttl_ms:500,capabilities:{steering:true,pause:false}});
+      env.flush();assert.equal(get('pin-mode').disabled,false);
+      get('pin-mode').click();const canvas=get(canvasId);
+      canvas.fire('pointerdown',{clientX:320,clientY:210,pointerId:1});
+      canvas.fire('pointermove',{clientX:322,clientY:211,pointerId:1});
+      canvas.fire('pointerup',{clientX:320,clientY:210,pointerId:1});
+      assert.ok(get('pin-status').textContent.includes('waiting for PX4 controller acceptance'));
+      // Placement sends immediately; no second button click is required.
+      assert.equal(control.sent.filter(m=>m.type==='navigate').length,1);
+      const command=control.sent.at(-1);assert.equal(command.type,'navigate');
+      assert.ok(command.position.every(v=>Math.abs(v)<1e-8));
+      control.message({type:'control_status',protocol_version:1,epoch:1,mode:'waiting',ready:false,navigation_ready:true,lease_id:null,reason:'Pinned destination accepted',last_request_id:command.request_id,accepted:true,ttl_ms:500,capabilities:{steering:true,pause:false}});
+      assert.ok(get('pin-status').textContent.includes('Accepted:'));
+      assert.equal(get('battery').textContent,'97%');assert.equal(get('battery-fill').style.width,'97%');
+      results.push(canvasId);
+    }finally{app?.destroy();env.restore();}
+  }
+  return results;
+}
+
+export async function runQueuedPinTest(){
+  const env=environment(0),doc=markup(),get=id=>doc.getElementById(id);let app;
+  try{
+    app=mountDashboard({document:doc,autoStart:false});app.adapter.connectLive('ws://localhost:8765/stream');
+    const telemetry=env.Socket.instances.at(-1);telemetry.open();const stamp={sec:1700000000,nanosec:0};
+    telemetry.message({type:'pose',protocol_version:1,frame_id:'gazebo_world',stamp,position:[0,0,2],orientation:[0,0,0,1]});
+    telemetry.message({type:'map',protocol_version:1,frame_id:'gazebo_world',stamp,operation:'replace',revision:1,points:[[3,3,2]]});
+    app.adapter.connectControl('ws://localhost:8765/control');const control=env.Socket.instances.at(-1);control.open();
+    const status={type:'control_status',protocol_version:1,epoch:0,mode:'waiting',ready:false,navigation_ready:false,lease_id:null,reason:'Preparing',ttl_ms:500,capabilities:{steering:true,pause:false}};
+    control.message(status);env.flush();get('pin-mode').click();
+    get('top-canvas').fire('pointerdown',{clientX:320,clientY:210,pointerId:1});
+    get('top-canvas').fire('pointerup',{clientX:320,clientY:210,pointerId:1});
+    assert.equal(control.sent.length,0);assert.ok(get('pin-status').textContent.includes('queued'));
+    control.message({...status,navigation_ready:true});await Promise.resolve();
+    assert.equal(control.sent.length,1);assert.equal(control.sent[0].type,'navigate');
+    control.message({...status,navigation_ready:true});await Promise.resolve();assert.equal(control.sent.length,1);
+    const first=control.sent[0];
+    get('pin-mode').click();get('top-canvas').fire('pointerdown',{clientX:340,clientY:210,pointerId:2});
+    get('top-canvas').fire('pointerup',{clientX:340,clientY:210,pointerId:2});
+    assert.equal(control.sent.length,1,'second pin waits for first acknowledgement');
+    control.message({...status,epoch:1,navigation_ready:true,last_request_id:first.request_id,accepted:true,destination:[0,0],reason:'Pinned destination accepted'});
+    env.advance(1100);await Promise.resolve();
+    assert.equal(control.sent.length,2);assert.equal(control.sent[1].epoch,1,'latest pin uses acknowledged epoch');
+    assert.ok(control.sent[1].position[0]>.5,'latest selected point wins');
+    const second=control.sent[1];
+    control.message({...status,epoch:2,navigation_ready:true,last_request_id:second.request_id,accepted:true,destination:[1.2,0],reason:'Pin adjusted to nearby clear destination'});
+    assert.ok(get('pin-status').textContent.includes('adjusted'));
+    assert.deepEqual(app.store.getState().navigationAck.destination,[1.2,0]);
+    get('pin-mode').click();get('top-canvas').fire('pointerdown',{clientX:350,clientY:210,pointerId:3});get('top-canvas').fire('pointerup',{clientX:350,clientY:210,pointerId:3});
+    const third=control.sent.at(-1);assert.equal(control.sent.length,3);
+    control.message({...status,epoch:3,navigation_ready:true,last_request_id:third.request_id,accepted:false,retryable:true,reason:'Destination requires fresh navigation'});
+    env.advance(1100);await Promise.resolve();assert.equal(control.sent.length,4);assert.equal(control.sent.at(-1).epoch,3);
+    return 'Queued and rapid pins, adjusted destinations and transient rejection retry';
+  }finally{app?.destroy();env.restore();}
+}
+
+export function runMissionButtonTests(){
+  const env=environment(0),doc=markup(),get=id=>doc.getElementById(id);let app;
+  try{
+    app=mountDashboard({document:doc,autoStart:false});app.adapter.connectLive('ws://localhost:8765/stream');
+    const telemetry=env.Socket.instances.at(-1);telemetry.open();const stamp={sec:1700000000,nanosec:0};
+    telemetry.message({type:'pose',protocol_version:1,frame_id:'gazebo_world',stamp,position:[0,0,2],orientation:[0,0,0,1],velocity:[3,4,0]});
+    telemetry.message({type:'map',protocol_version:1,frame_id:'gazebo_world',stamp,operation:'replace',revision:1,points:[[3,3,2]]});
+    app.adapter.connectControl('ws://localhost:8765/control');const control=env.Socket.instances.at(-1);control.open();
+    const status={type:'control_status',protocol_version:1,epoch:0,mode:'waiting',ready:false,navigation_ready:true,start_ready:true,return_ready:false,mission_phase:'PREFLIGHT',lease_id:null,reason:'Standby',ttl_ms:500,capabilities:{steering:true,pause:false}};
+    control.message(status);env.flush();assert.equal(control.sent.length,0);assert.equal(get('mission-start').disabled,false);assert.equal(get('mission-home').disabled,true);
+    assert.equal(get('speed').textContent,'5.00');
+    get('mission-start').click();const start=control.sent.at(-1);assert.equal(start.type,'start');assert.equal(get('mission-start').disabled,true);
+    control.message({...status,epoch:1,mode:'autonomous',ready:true,start_ready:false,return_ready:true,mission_phase:'NAVIGATE',last_request_id:start.request_id,accepted:true,reason:'Start accepted'});
+    assert.equal(get('mission-home').disabled,false);get('mission-home').click();const home=control.sent.at(-1);assert.equal(home.type,'return_home');assert.equal(home.epoch,1);
+    control.message({...status,epoch:2,mode:'autonomous',ready:true,start_ready:false,return_ready:true,last_request_id:home.request_id,accepted:true,reason:'Returning home and landing'});
+    assert.ok(get('mission-status').textContent.includes('Returning home'));
+    return 'Standby Start, Return Home, acknowledgements and measured 5.00 m/s';
+  }finally{app?.destroy();env.restore();}
+}

@@ -1,0 +1,2 @@
+# Unified-diff context prefixes on blank lines are significant patch content.
+simulation/px4_harmonic/patches/*.patch -whitespace

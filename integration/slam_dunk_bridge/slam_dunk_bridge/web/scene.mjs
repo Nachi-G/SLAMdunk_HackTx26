@@ -1,3 +1,22 @@
+export function topViewToWorld(px,py,width,height,center,distance,z=2){
+  if(![px,py,width,height,distance,z,...center].every(Number.isFinite)||width<=0||height<=0||distance<=0)throw new TypeError('Invalid top-view coordinates');
+  const scale=Math.min(width,height)/distance;
+  return [center[0]+(px-width/2)/scale,center[1]-(py-height/2)/scale,z];
+}
+
+export function perspectiveViewToWorld(px,py,width,height,center,distance,azimuth,elevation,z=2){
+  if(![px,py,width,height,distance,azimuth,elevation,z,...center].every(Number.isFinite)||width<=0||height<=0||distance<=0)throw new TypeError('Invalid camera coordinates');
+  const ca=Math.cos(azimuth),sa=Math.sin(azimuth),ce=Math.cos(elevation),se=Math.sin(elevation);
+  const d=[ce*ca,ce*sa,se],u=[-sa,ca,0],v=[-se*ca,-se*sa,ce];
+  const f=Math.min(width,height)*1.28,sx=(px-width/2)/f,sy=(height/2-py)/f;
+  const camera=center.map((value,i)=>value+distance*d[i]);
+  const ray=d.map((value,i)=>-value+sx*u[i]+sy*v[i]);
+  if(Math.abs(ray[2])<1e-9)throw new RangeError('Click below the horizon');
+  const t=(z-camera[2])/ray[2];
+  if(t<=0)throw new RangeError('Click below the horizon');
+  return [camera[0]+t*ray[0],camera[1]+t*ray[1],z];
+}
+
 /** Small dependency-free, Z-up point-cloud renderer. All coordinates are meters. */
 export function createScene(canvas, options = {}) {
   if (!canvas || typeof canvas.getContext !== 'function') throw new TypeError('A canvas is required');
@@ -71,8 +90,17 @@ export function createScene(canvas, options = {}) {
       const size=mode==='top'?1.6:Math.max(1.1,Math.min(3,q[2]*.06));
       const z=Math.max(0,Math.min(3,p[2]));ctx.fillStyle=z>1.8?'#9fc9b780':z>.7?'#7fb4a59c':'#628e8990';ctx.fillRect(q[0],q[1],size,size);
     }
+    const navigationZ=data.pose?.position[2]??2;
+    if(data.bounds){const [xmin,xmax,ymin,ymax]=data.bounds;const corners=[[xmin,ymin,navigationZ],[xmax,ymin,navigationZ],[xmax,ymax,navigationZ],[xmin,ymax,navigationZ]];for(let i=0;i<4;i++)line(corners[i],corners[(i+1)%4],'#77bdf466',1,[5,5]);}
+    for(const [x,y,radius,amplitude] of data.keepouts??[]){
+      const ring=Array.from({length:24},(_,i)=>{const angle=i/24*Math.PI*2;return [x+radius*Math.cos(angle),y+radius*Math.sin(angle)+(Math.sin(angle)>=0?amplitude:-amplitude),navigationZ];});
+      for(let i=0;i<ring.length;i++)line(ring[i],ring[(i+1)%ring.length],'#e6a56b44',1,[2,4]);
+    }
+    for(const [points,color,stroke,dash] of [[data.route??[],'#77bdf488',1.7,[6,5]],[data.prediction??[],'#ffb95b',3,[]]]){
+      for(let i=1;i<points.length;i++)line(points[i-1],points[i],color,stroke,dash);
+    }
     for(let i=1;i<data.trail.length;i++)line(data.trail[i-1],data.trail[i],'#c9f76baa',mode==='top'?1.5:1.7);
-    if(data.target&&data.pose){line(data.pose.position,data.target,'#f4c68e99',1,[4,5]);const q=project(data.target);if(q){ctx.strokeStyle='#f4c68e';ctx.beginPath();ctx.arc(q[0],q[1],5,0,Math.PI*2);ctx.stroke();}}
+    if(data.target&&data.pose){line(data.pose.position,data.target,'#f4c68e99',1,[4,5]);const q=project(data.target);if(q){ctx.strokeStyle='#f4c68e';ctx.fillStyle='#f4c68e';ctx.lineWidth=2;ctx.beginPath();ctx.arc(q[0],q[1],9,0,Math.PI*2);ctx.stroke();ctx.font='bold 11px Segoe UI';ctx.fillText('GOAL',q[0]+13,q[1]-9);}}
     drawDrone();
     // A restrained world orientation indicator in the corner.
     if(mode!=='top'){ctx.font='8px Segoe UI';ctx.fillStyle='#849b90';ctx.fillText('Z',width-26,height-53);ctx.strokeStyle='#8da894';ctx.beginPath();ctx.moveTo(width-23,height-27);ctx.lineTo(width-23,height-45);ctx.stroke();ctx.strokeStyle='#6d8e81';ctx.beginPath();ctx.moveTo(width-23,height-27);ctx.lineTo(width-38,height-20);ctx.moveTo(width-23,height-27);ctx.lineTo(width-9,height-20);ctx.stroke();}
@@ -80,9 +108,19 @@ export function createScene(canvas, options = {}) {
   function loop(){if(destroyed)return;paint();raf=requestAnimationFrame(loop);}
   function endDrag(){drag=null;}
   if(options.interactive!==false){
-    listen('pointerdown',event=>{autoFit=false;drag={x:event.clientX,y:event.clientY,pan:event.shiftKey||mode==='top'};canvas.setPointerCapture?.(event.pointerId);});
-    listen('pointermove',event=>{if(!drag)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(drag.pan){const scale=distance/Math.max(1,Math.min(width,height));center[0]-=dx*scale;center[1]+=dy*scale;}else{azimuth-=dx*.008;elevation=Math.max(.12,Math.min(1.5,elevation+dy*.008));}drag.x=event.clientX;drag.y=event.clientY;follow=false;options.onFollowChange?.(false);dirty=true;});
-    listen('pointerup',endDrag);listen('pointercancel',endDrag);listen('lostpointercapture',endDrag);
+    listen('pointerdown',event=>{autoFit=false;drag={x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,moved:false,picking:typeof options.isPicking==='function'&&options.isPicking(),view:{center:[...center],distance,azimuth,elevation,width,height},pan:event.shiftKey||mode==='top'};canvas.setPointerCapture?.(event.pointerId);});
+    listen('pointermove',event=>{if(!drag)return;drag.moved ||= Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)>8;if(drag.picking)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(drag.pan){const scale=distance/Math.max(1,Math.min(width,height));center[0]-=dx*scale;center[1]+=dy*scale;}else{azimuth-=dx*.008;elevation=Math.max(.12,Math.min(1.5,elevation+dy*.008));}drag.x=event.clientX;drag.y=event.clientY;follow=false;options.onFollowChange?.(false);dirty=true;});
+    listen('pointerup',event=>{
+      if(drag&&!drag.moved&&drag.picking&&typeof options.onPick==='function'){
+        const rect=canvas.getBoundingClientRect(),view=drag.view;
+        const x=event.clientX-(rect.left??0),y=event.clientY-(rect.top??0),z=data.pose?.position[2]??2;
+        try{
+          const point=mode==='top'?topViewToWorld(x,y,view.width,view.height,view.center,view.distance,z):perspectiveViewToWorld(x,y,view.width,view.height,view.center,view.distance,view.azimuth,view.elevation,z);
+          options.onPick(point);
+        }catch(error){options.onPickError?.(error.message);}
+      }
+      endDrag();
+    });listen('pointercancel',endDrag);listen('lostpointercapture',endDrag);
     listen('wheel',event=>{autoFit=false;event.preventDefault();distance=Math.max(3,Math.min(1200,distance*Math.exp(Math.max(-200,Math.min(200,event.deltaY))*.002)));dirty=true;},{passive:false});
     listen('keydown',event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','=','-','0'].includes(event.key))return;event.preventDefault();autoFit=false;if(event.key==='0'){follow=false;options.onFollowChange?.(false);fit();return;}if(event.key==='+'||event.key==='=')distance=Math.max(3,distance*.85);else if(event.key==='-')distance=Math.min(1200,distance*1.15);else if(mode==='top'){const d=distance*.04;if(event.key==='ArrowLeft')center[0]-=d;if(event.key==='ArrowRight')center[0]+=d;if(event.key==='ArrowUp')center[1]+=d;if(event.key==='ArrowDown')center[1]-=d;follow=false;options.onFollowChange?.(false);}else{if(event.key==='ArrowLeft')azimuth-=.1;if(event.key==='ArrowRight')azimuth+=.1;if(event.key==='ArrowUp')elevation=Math.min(1.5,elevation+.1);if(event.key==='ArrowDown')elevation=Math.max(.12,elevation-.1);}dirty=true;});
   }

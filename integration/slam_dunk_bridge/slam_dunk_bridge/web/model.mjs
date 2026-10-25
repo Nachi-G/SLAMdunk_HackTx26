@@ -15,7 +15,7 @@ function profile(value,source) {
   return Object.freeze({value,inflation_hgp:Number((.45+.45*value/100).toFixed(4)),dyn_base_inflation_m:Number((.1+.2*value/100).toFixed(4)),state:source==='demo'?'demo':'proposal',applied:null});
 }
 function initial(source) {
-  return {source,connection:source==='demo'?'demo':'connecting',view:'live',frameId:null,mapPoints:empty(),combinedPoints:empty(),pose:null,trail:empty(),speed:null,battery:null,flightSeconds:null,profile:profile(0,source),speedMode:'precision',speedLimit:1,command:null,statusMessage:source==='demo'?'Synthetic mission · no vehicle connected':'Waiting for bridge data',stale:Object.freeze({map:true,pose:true}),history:empty(),selectedTime:null,playing:false,rejected:0,mode:source==='demo'?'synthetic_demo':'map_snapshot',controlAvailable:source==='demo',controlConnection:source==='demo'?'demo':'unavailable',controlCapabilities:Object.freeze({steering:source==='demo',pause:source==='demo'}),controlEpoch:0,controlReady:source==='demo',explorationMode:source==='demo'?'autonomous':'waiting',steering:null};
+  return {source,connection:source==='demo'?'demo':'connecting',view:'live',frameId:null,mapPoints:empty(),combinedPoints:empty(),pose:null,trail:empty(),speed:null,battery:null,flightSeconds:null,profile:profile(0,source),speedMode:'precision',speedLimit:1,command:null,statusMessage:source==='demo'?'Synthetic mission · no vehicle connected':'Waiting for bridge data',stale:Object.freeze({map:true,pose:true}),history:empty(),selectedTime:null,playing:false,rejected:0,mode:source==='demo'?'synthetic_demo':'map_snapshot',controlAvailable:source==='demo',controlConnection:source==='demo'?'demo':'unavailable',controlCapabilities:Object.freeze({steering:source==='demo',pause:source==='demo'}),controlEpoch:0,controlReady:source==='demo',navigationReady:false,missionStartReady:false,missionReturnReady:false,explorationMode:source==='demo'?'autonomous':'waiting',steering:null};
 }
 
 export class MissionStore {
@@ -50,7 +50,15 @@ export class MissionStore {
       if(!ages||!['map','pose'].every(k=>ages[k]===null||(finite(ages[k])&&ages[k]>=0))) return this._reject('Rejected invalid source freshness');
       if(message.frame_id && this.state.frameId && message.frame_id!==this.state.frameId) return this._reject('Rejected frame mismatch');
       this.sourceAge={...ages}; this.ageAt={map:now,pose:now};
-      this._emit({mode:message.mode}); this.tick(now); return true;
+      let plan=null;
+      if(message.plan!==undefined&&message.plan!==null){
+        const p=message.plan,points=v=>Array.isArray(v)&&v.length<=2000&&v.every(x=>vector(x,3)&&x.every(n=>Math.abs(n)<=1e6));
+        if(!p||p.frame_id!==message.frame_id||!points(p.route)||!points(p.prediction)||!(p.target===null||vector(p.target,3))||typeof p.prediction_valid!=='boolean'||typeof p.manual!=='boolean')return this._reject('Rejected invalid plan');
+        if(p.keepouts!==undefined&&(!Array.isArray(p.keepouts)||p.keepouts.length>128||!p.keepouts.every(k=>vector(k,4)&&k[2]>0&&k[3]>=0)))return this._reject('Invalid reserved areas');
+        if(p.bounds!==undefined&&(!vector(p.bounds,4)||p.bounds[0]>=p.bounds[1]||p.bounds[2]>=p.bounds[3]))return this._reject('Invalid course bounds');
+        plan=Object.freeze({...p,route:Object.freeze(p.route.map(frozenVector)),prediction:Object.freeze(p.prediction.map(frozenVector)),target:p.target?frozenVector(p.target):null});
+      }
+      this._emit({mode:message.mode,plan,vehicleEvent:typeof message.vehicle_event==='string'?message.vehicle_event.slice(0,512):null}); this.tick(now); return true;
     }
     if(!['map','pose'].includes(message.type)) return this._reject('Unsupported message type');
     const kind=message.type,t=timestamp(message.stamp);
@@ -77,7 +85,7 @@ export class MissionStore {
       if(message.flight_seconds!==undefined&&message.flight_seconds!==null&&(!finite(message.flight_seconds)||message.flight_seconds<0)) return this._reject('Rejected invalid flight duration');
       const q=message.orientation.map(v=>v/norm),[x,y,z,w]=q;
       const pose=Object.freeze({position:frozenVector(message.position),orientation:frozenVector(q),yaw:Math.atan2(2*(w*z+x*y),1-2*(y*y+z*z))});
-      patch={...patch,pose,trail:Object.freeze([...this.state.trail,pose.position].slice(-LIMITS.trail)),speed:message.velocity?Math.hypot(...message.velocity):null,battery:message.battery??null,flightSeconds:message.flight_seconds??null};
+      patch={...patch,pose,trail:Object.freeze([...this.state.trail,pose.position].slice(-LIMITS.trail)),speed:message.velocity?Math.hypot(...message.velocity):null,battery:message.battery??null,flightSeconds:message.flight_seconds??null,batterySource:message.battery_source??null,flightSource:message.flight_source??null};
     }
     this.lastStamp[kind]=t; this.received[kind]=now;
     // A fresh accepted source sample supersedes an older status report for this type.
@@ -135,7 +143,7 @@ export class MissionStore {
   setControlConnection(connection) {
     if(!['connecting','connected','disconnected','unavailable'].includes(connection)||this.state.source!=='live')return false;
     const disconnected=connection!=='connected';
-    this._emit({controlConnection:connection,...(connection==='connecting'?{controlEpoch:0}:{}),...(disconnected?{controlAvailable:false,controlReady:false,steering:null,explorationMode:'waiting',controlCapabilities:Object.freeze({steering:false,pause:false})}:{})});
+    this._emit({controlConnection:connection,...(connection==='connecting'?{controlEpoch:0}:{}),...(disconnected?{controlAvailable:false,controlReady:false,navigationReady:false,missionStartReady:false,missionReturnReady:false,missionPending:false,steering:null,explorationMode:'waiting',controlCapabilities:Object.freeze({steering:false,pause:false})}:{})});
     return true;
   }
   ingestControl(message) {
@@ -143,7 +151,7 @@ export class MissionStore {
     if(this.state.source!=='live'||!message||message.protocol_version!==1||message.type!=='control_status'||!Number.isSafeInteger(message.epoch)||message.epoch<0||message.epoch<this.state.controlEpoch||!modes.includes(message.mode)||typeof message.ready!=='boolean'||!message.capabilities||typeof message.capabilities.steering!=='boolean'||typeof message.capabilities.pause!=='boolean'||message.ttl_ms!==500||!(message.lease_id===null||typeof message.lease_id==='string'&&message.lease_id.length>0&&message.lease_id.length<=128)||typeof message.reason!=='string'||message.reason.length>1024)return false;
     if(message.mode==='steering'&&!message.lease_id)return false;
     const steering=message.mode==='steering'?Object.freeze({leaseId:message.lease_id,epoch:message.epoch,direction:message.direction??null}):null;
-    this._emit({controlConnection:'connected',controlAvailable:message.ready&&message.capabilities.steering,controlReady:message.ready,controlCapabilities:Object.freeze({...message.capabilities}),controlEpoch:message.epoch,explorationMode:message.mode,steering,command:Object.freeze({type:'control',phase:message.mode,message:message.reason||`Exploration ${message.mode}`})});
+    this._emit({controlConnection:'connected',controlAvailable:message.ready&&message.capabilities.steering,controlReady:message.ready,missionStartReady:message.start_ready===true,missionReturnReady:message.return_ready===true,missionPhase:message.mission_phase??null,startReason:typeof message.start_reason==='string'?message.start_reason.slice(0,512):null,navigationReady:typeof message.navigation_ready==='boolean'?message.navigation_ready:message.ready&&message.capabilities.steering,controlCapabilities:Object.freeze({...message.capabilities}),controlEpoch:message.epoch,explorationMode:message.mode,steering,command:Object.freeze({type:'control',phase:message.mode,message:message.reason||`Exploration ${message.mode}`})});
     return true;
   }
   startSteering(direction,now=Date.now()) {

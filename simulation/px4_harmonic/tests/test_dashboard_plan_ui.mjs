@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {topViewToWorld} from '../../../integration/slam_dunk_bridge/slam_dunk_bridge/web/scene.mjs';
+import {MissionStore} from '../../../integration/slam_dunk_bridge/slam_dunk_bridge/web/model.mjs';
+assert.deepEqual(topViewToWorld(100,50,200,100,[4,5,2],20),[4,5,2]);
+assert.deepEqual(topViewToWorld(150,25,200,100,[4,5,2],20),[14,10,2]);
+assert.throws(()=>topViewToWorld(0,0,0,100,[0,0,0],20));
+const store=new MissionStore();store.reset('live');
+const plan={frame_id:'gazebo_world',route:[[0,0,2],[5,0,2]],prediction:[[0,0,2],[.2,.1,2]],target:[5,0,2],prediction_valid:true,manual:false};
+const status={type:'status',protocol_version:1,mode:'map_snapshot',frame_id:'gazebo_world',age_seconds:{map:0,pose:0},plan};
+assert.equal(store.ingest(status),true);assert.deepEqual(store.getState().plan.target,[5,0,2]);
+assert.equal(store.ingest({...status,plan:{...plan,prediction:[[NaN,0,2]]}}),false);
+assert.equal(store.ingest({...status,plan:null}),true);assert.equal(store.getState().plan,null);
+store.ingest({type:'pose',protocol_version:1,frame_id:'gazebo_world',stamp:{sec:1234,nanosec:0},position:[0,0,2],orientation:[0,0,0,1],battery:100,battery_source:'placeholder',flight_seconds:0,flight_source:'placeholder'});
+assert.equal(store.getState().batterySource,'placeholder');assert.equal(store.getState().flightSeconds,0);
+console.log('Top-view pin coordinates, plan validation/stale clearing and explicit telemetry placeholders: PASS');

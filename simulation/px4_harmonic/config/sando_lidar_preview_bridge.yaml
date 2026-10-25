@@ -1,0 +1,9 @@
+# Gazebo -> ROS only. No PX4 input topics or SANDO planner inputs.
+- ros_topic_name: /sando_perception/lidar/points_raw
+  gz_topic_name: /sando/lidar/scan/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+  lazy: false
+  subscriber_queue: 5
+  publisher_queue: 5

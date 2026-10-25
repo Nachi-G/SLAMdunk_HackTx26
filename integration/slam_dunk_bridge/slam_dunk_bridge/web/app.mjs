@@ -12,6 +12,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   const pageEvents = doc.defaultView ?? globalThis;
   let topFollow = true, mainFollow = true, toastTimer = null, expanded = null;
   let activePress = null, renewalTimer = null;
+  let pinArmed=false,pinnedGoal=null,pinQueued=false,pinSending=false,pinAttemptAt=0,pinVersion=0,pinSentVersion=0,pinAckHandled=null;
   function on(id,type,handler) { const el=typeof id==='string'?$(id):id;el.addEventListener(type,handler);removers.push(()=>el.removeEventListener(type,handler)); }
   function text(id,value) { $(id).textContent=String(value); }
   function pressed(id,value) { $(id).setAttribute('aria-pressed',String(value)); }
@@ -19,11 +20,29 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   function formatTime(seconds) { if(!Number.isFinite(seconds)||seconds<0)return '—';const value=Math.floor(seconds),m=Math.floor(value/60),s=value%60;return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; }
   function setTopFollow(value) { topFollow=value;scenes.top?.setFollow(value);pressed('top-follow',value);text('top-follow',`Follow ${value?'on':'off'} ◎`); }
   function setMainFollow(value) { mainFollow=value;scenes.main?.setFollow(value);pressed('main-follow',value);$('main-follow').classList.toggle('active',value); }
-  scenes.top=createScene($('top-canvas'),{mode:'top',local:true,follow:true,onFollowChange:value=>setTopFollow(value)});
-  scenes.main=createScene($('main-canvas'),{mode:'perspective',follow:true,onFollowChange:value=>setMainFollow(value)});
+  const pickOptions={isPicking:()=>pinArmed,onPick:position=>{
+    if(!pinArmed)return;
+    pinnedGoal=position;pinVersion++;pinArmed=false;pressed('pin-mode',false);
+    $('top-canvas').style.cursor='';$('main-canvas').style.cursor='';
+    text('pin-status',`Selected X ${position[0].toFixed(1)}, Y ${position[1].toFixed(1)} m`);
+    pinQueued=true;store._emit({navigationAck:null});sendPinnedGoal();
+  },onPickError:reason=>text('pin-status',reason)};
+  scenes.top=createScene($('top-canvas'),{mode:'top',local:true,follow:true,onFollowChange:value=>setTopFollow(value),...pickOptions});
+  scenes.main=createScene($('main-canvas'),{mode:'perspective',follow:true,onFollowChange:value=>setMainFollow(value),...pickOptions});
   scenes.history=createScene($('history-canvas'),{mode:'top',follow:false});
   const camera=createCameraFeed({image:$('camera-image'),empty:$('camera-empty'),status:$('camera-state'),note:$('camera-note')});
 
+  function sendPinnedGoal(){
+    if(!pinnedGoal||pinSending)return;
+    const state=store.getState();
+    if(!state.navigationReady||state.steering||state.connection!=='connected'){
+      pinQueued=true;text('pin-status','Destination queued · waiting for flight controller readiness');return;
+    }
+    pinSending=true;pinQueued=false;pinSentVersion=pinVersion;pinAttemptAt=Date.now();
+    releasePress('pin destination');const result=adapter.navigate(pinnedGoal.slice(0,2));
+    if(!result.ok){pinSending=false;pinQueued=true;text('pin-status',result.reason??'Control connection unavailable; retrying');}
+    else text('pin-status','Destination sent · waiting for PX4 controller acceptance');
+  }
   function releasePress(reason='released') {
     const press=activePress;
     activePress=null;
@@ -58,7 +77,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     text('screen-title',history?'A mission worth revisiting.':'Eyes on the unknown.');
     text('screen-subtitle',history?'Trace the session. See how the picture came together.':'Your live picture. One connected environment.');
     $('source').value=state.source;
-    text('source-badge',synthetic?'SYNTHETIC DEMO':state.controlAvailable?'LIVE BRIDGE · STEERING':'LIVE BRIDGE · READ ONLY');
+    text('source-badge',synthetic?'SYNTHETIC DEMO':state.frameId==='gazebo_world'?(state.controlAvailable?'GAZEBO GROUND TRUTH · MANUAL OVERRIDE':'GAZEBO GROUND TRUTH · READ ONLY'):state.controlAvailable?'LIVE BRIDGE · STEERING':'LIVE BRIDGE · READ ONLY');
     $('source-badge').classList.toggle('demo-badge',synthetic);
     const connectionLabels={demo:'Demo online',connecting:'Connecting to bridge',connected:synthetic?'Synthetic bridge online':'Bridge connected',disconnected:'Bridge disconnected'};
     // Keep the status dot as a real DOM element rather than replacing it via innerHTML.
@@ -74,12 +93,19 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     $('map-freshness').classList.toggle('stale',state.stale.map||state.stale.pose);
     $('empty-state').hidden=state.mapPoints.length>0;
     text('speed',state.stale.pose||state.speed===null?'—':state.speed.toFixed(2));
-    text('speed-source',synthetic?'SYNTHETIC TELEMETRY':'MEASURED TELEMETRY');
-    text('battery',state.battery===null?'—':`${Math.round(state.battery)}%`);
-    $('battery-fill').style.width=state.battery===null?'0%':`${state.battery}%`;
-    text('flight-time',formatTime(state.flightSeconds));
-    text('vehicle-status',synthetic?'DEMO':state.controlAvailable?'CONNECTED':'READ ONLY');
-    text('vehicle-note',synthetic?'Synthetic telemetry · no vehicle connected':'Unavailable fields show — · no estimate inferred');
+    text('speed-source',synthetic?'SYNTHETIC TELEMETRY':state.frameId==='gazebo_world'?'PX4 VELOCITY':'MEASURED TELEMETRY');
+    $('mission-start').disabled=history||state.missionPending||!state.missionStartReady||state.controlConnection!=='connected';
+    $('mission-home').disabled=history||state.missionPending||!state.missionReturnReady||state.controlConnection!=='connected';
+    $('mission-start').title=state.startReason??'Waiting for standby controller';
+    text('mission-status',!state.missionStartReady&&['PREFLIGHT','DONE','ABORT'].includes(state.missionPhase)&&state.startReason?state.startReason:state.missionAck?.reason??(state.missionStartReady?(state.startReason??'Ready · Start takes off and follows the course'):state.missionPhase?`Flight: ${state.missionPhase}`:'Waiting for standby controller'));
+    text('battery','97%');
+    text('battery-source','BATTERY · FIXED');
+    $('battery').title='Fixed display value; not live battery telemetry';
+    text('flight-source',state.flightSource==='controller_last'?'FLIGHT TIME · LAST RECEIVED':'FLIGHT TIME');
+    $('battery-fill').style.width='97%';
+    text('flight-time',state.flightSource==='placeholder'?'—':formatTime(state.flightSeconds));
+    text('vehicle-status',state.vehicleEvent?.startsWith('COLLISION')?'COLLISION / FAILED':synthetic?'DEMO':state.controlAvailable?'CONNECTED':'READ ONLY');
+    text('vehicle-note',synthetic?'Synthetic telemetry · no vehicle connected':state.frameId==='gazebo_world'?'Live PX4 simulation telemetry.':'Unavailable fields show — · no estimate inferred');
     $('margin').value=String(state.profile.value);
     text('margin-value',state.profile.value===0?'Default':state.profile.value===100?'More clearance':`${state.profile.value}% range`);
     text('static-margin',`${state.profile.inflation_hgp.toFixed(2)} m`);text('dynamic-margin',`${state.profile.dyn_base_inflation_m.toFixed(2)} m`);
@@ -93,16 +119,35 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     const paused=state.explorationMode==='paused';
     text('pause-label',paused?'RESUME':'PAUSE');$('stop').setAttribute('aria-label',paused?'Resume exploration':'Pause exploration');
     text('exploration-mode',({autonomous:'Autonomous exploration',steering:'Operator steering',paused:'Exploration paused',waiting:'Waiting for exploration',fault:'Control fault'})[state.explorationMode]??'Waiting for exploration');
-    text('control-help',demo||state.controlAvailable?'Hold a direction to steer. Release to explore.':'Read-only telemetry · connect the command supervisor');
-    text('command-status',state.command?.message??(demo?'Autonomous exploration active':'Command supervisor not connected'));
+    text('control-help',state.frameId==='gazebo_world'&&state.controlAvailable?'Hold to steer WITHOUT avoidance. Release to rejoin course.':demo||state.controlAvailable?'Hold a direction to steer. Release to explore.':(state.controlConnection==='connecting'?'Connecting to PX4 controls…':state.frameId==='gazebo_world'?'Waiting for PX4 manual-control run; reconnecting automatically':'Read-only telemetry · connect the command supervisor'));
+    text('command-status',state.vehicleEvent?.startsWith('COLLISION')?state.vehicleEvent:state.command?.message??(demo?'Autonomous exploration active':'Command supervisor not connected'));
     $('stop').title=!demo&&!state.controlCapabilities?.pause?'Planner braking/hold service is not available':'';
     if(activePress&&!canSteer)releasePress('steering unavailable');
     text('data-title',demo?'A space taking shape.':'Your backend. Your live view.');
     text('data-note',demo?'The demo reveals an indoor site as the drone explores. Connect the bridge when your backend is ready.':state.statusMessage);
-    text('footer-status',demo?'Browser demo · hold to steer':state.controlAvailable?'SANDO supervisor connected · leased steering':'Read-only telemetry · no command transport');
-    const target=state.command?.type==='move'&&['accepted','moving'].includes(state.command.phase)?state.command.target:null;
-    scenes.top.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target});
-    scenes.main.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target});
+    text('footer-status',demo?'Browser demo · hold to steer':state.controlAvailable?(state.frameId==='gazebo_world'?'PX4 manual override · release to rejoin course':'SANDO supervisor connected · leased steering'):'Read-only telemetry · no command transport');
+    const plan=state.plan,planCurrent=plan&&!state.stale.pose&&state.connection==='connected';
+    if(planCurrent&&plan.buffer_recovery&&state.missionPhase==='NAVIGATE')text('mission-status','Clearing obstacle buffer · up to 0.15 m/s');
+    if(state.missionPhase==='GOAL_HOLD')text('mission-status','Aligning over clear landing site');
+    if(pinSending&&state.controlConnection==='disconnected'){pinSending=false;pinQueued=true;text('pin-status','Control disconnected · destination queued for reconnect');}
+    if(state.navigationAck&&state.navigationAck.requestId!==pinAckHandled){
+      pinAckHandled=state.navigationAck.requestId;pinSending=false;
+      if(pinVersion===pinSentVersion){
+        if(!state.navigationAck.accepted&&state.navigationAck.retryable){pinQueued=true;text('pin-status','Queued · waiting for fresh control state');}
+        else text('pin-status',(state.navigationAck.accepted?'Accepted: ':'Rejected: ')+state.navigationAck.reason);
+        if(state.navigationAck.accepted&&state.navigationAck.destination)pinnedGoal=[...state.navigationAck.destination,pinnedGoal?.[2]??2];
+      }else pinQueued=true;
+    }
+    if(pinQueued&&state.navigationReady&&!state.steering&&Date.now()-pinAttemptAt>1000)queueMicrotask(()=>{if(pinQueued)sendPinnedGoal();});
+    $('pin-mode').disabled=history||state.source!=='live'||state.frameId!=='gazebo_world';
+    $('pin-go').disabled=!pinnedGoal||pinSending||!state.navigationReady||!!state.steering||history;
+    $('pin-go').title=state.navigationReady?'Send selected destination':'Start a connected manual-control flight run to enable destinations';
+    const plannedTarget=pinnedGoal??(planCurrent?plan.target:null);
+    const keepouts=planCurrent?plan.keepouts??[]:[],bounds=planCurrent?plan.bounds:null;
+    const route=planCurrent?plan.route:[],prediction=planCurrent&&plan.prediction_valid?plan.prediction:[];
+    const target=plannedTarget??(state.command?.type==='move'&&['accepted','moving'].includes(state.command.phase)?state.command.target:null);
+    scenes.top.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,route,prediction,keepouts,bounds});
+    scenes.main.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,route,prediction,keepouts,bounds});
     scenes.history.setData({points:display.combinedPoints,pose:display.pose,trail:display.trail,target:null});
     camera.setVisible(!history&&!doc.hidden);
     const frames=state.history,min=frames[0]?.timestamp??0,max=frames.at(-1)?.timestamp??1,selected=state.selectedTime??max;
@@ -118,14 +163,22 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
 
   const settings=new URLSearchParams(globalThis.location?.search??'');
   function connectSource(source){
+    pinQueued=false;pinSending=false;pinnedGoal=null;pinArmed=false;pinAckHandled=null;pinVersion++;pinSentVersion=pinVersion;
     releasePress('source changed');
     if(source==='demo')adapter.startDemo();
-    else{adapter.connectLive();const control=settings.get('control');if(control&&!adapter.connectControl(control))toast('Invalid command supervisor URL');}
+    else{adapter.connectLive();const control=settings.get('control')??(globalThis.location?.hostname&&globalThis.location.port==='8765'?`${globalThis.location.protocol==='https:'?'wss':'ws'}://${globalThis.location.host}/control`:null);if(control&&!adapter.connectControl(control))toast('Invalid command supervisor URL');}
     setTopFollow(true);setMainFollow(true);
   }
   on('live-tab','click',()=>changeView('live'));on('history-tab','click',()=>changeView('history'));
   on('open-history','click',()=>{changeView('history');$('history-tab').focus();});on('return-live','click',()=>{changeView('live');$('live-tab').focus();});
   on('source','change',()=>connectSource($('source').value));
+  for(const [id,action] of [['mission-start','start'],['mission-home','return_home']])on(id,'click',()=>{
+    pinQueued=false;pinSending=false;pinnedGoal=null;pinArmed=false;pinVersion++;
+    const result=adapter.mission(action);store._emit({missionAck:null,navigationAck:null});
+    text('mission-status',result.ok?'Request sent · awaiting controller acceptance':result.reason);
+  });
+  on('pin-mode','click',()=>{pinArmed=!pinArmed;pressed('pin-mode',pinArmed);text('pin-status',pinArmed?'Click either map to place your destination':'Pin placement canceled');$('top-canvas').style.cursor=pinArmed?'crosshair':'';$('main-canvas').style.cursor=pinArmed?'crosshair':'';});
+  on('pin-go','click',()=>{if(!pinnedGoal)return;pinSending=false;pinQueued=true;store._emit({navigationAck:null});sendPinnedGoal();});
   on('top-follow','click',()=>setTopFollow(!topFollow));on('main-follow','click',()=>setMainFollow(!mainFollow));on('main-fit','click',()=>scenes.main.fit());on('history-fit','click',()=>scenes.history.fit());
   for(const button of doc.querySelectorAll('[data-direction]')){
     button.setAttribute('aria-pressed','false');

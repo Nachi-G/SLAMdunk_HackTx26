@@ -1,0 +1,15 @@
+# Generated runtime output and machine-specific environments
+.dashboard_venv/
+__pycache__/
+*.py[cod]
+*.log
+quick_px4_demo/obstacle_rpc
+# Diagnostic sources are tracked; generated captures/reports aren't.
+diagnostics/*/
+diagnostics/*.json
+!diagnostics/PERCEPTION_STATUS.md
+!diagnostics/X500_LIDAR_SWITCH.md
+backups/
+build/
+install/
+log/
