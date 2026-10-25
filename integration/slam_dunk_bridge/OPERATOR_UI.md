@@ -13,6 +13,15 @@ simulation; select an added object with the Goal tool to change its motion.
 Live mode displays validated frontier status from the ROS supervisor, with editing
 and unsupported physical Pause disabled. See [Backup integration](../../docs/backup-integration.md).
 
+Choose **Unknown A**, **Unknown B** or **Unknown C** in **Test environment**, then
+**Begin exploration**, for hidden-layout mapping challenges. Start with a blank
+map and watch observed free cells and sensed obstacles accumulate as the drone
+explores. A tests staggered passages, B warehouse dead ends, and C moving
+obstacles. **Survey 2D** shows the discovered map overhead. Only observed free
+space accepts manual targets. Reset clears the survey; switching environments
+starts a new run. Direct links use `/?environment=A` (or B/C). These are synthetic
+range-sensor tests; full geometry and full-scene POV are not shown in the dashboard.
+
 ## Furnished flight room (`/flight-room.html`)
 
 The furnished editor is a 32 × 24 m room with one drone, three interior partitions,

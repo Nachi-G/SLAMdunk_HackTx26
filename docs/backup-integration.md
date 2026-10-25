@@ -16,6 +16,9 @@ the integration is checked out in `.worktrees/Backup`.
 - `/flight-room.html`: preserved furnished editor, altitude controls, manual
   pushing and bounded local mission recordings/replay.
 - `/mission-map.html`: redirects to `/flight-room.html#mission-map`.
+- `/?environment=A` (or `B`, `C`): an unknown challenge, ready for **Begin
+  exploration**. The **Test environment** selector also switches between the
+  existing open sandbox and the three hidden challenges.
 - `/?source=live&control=ws%3A%2F%2F127.0.0.1%3A8766%2Fcontrol`: live
   telemetry/control. Simulation editing is unavailable in live mode. The
   separate command socket retains leases and capability gating.
@@ -32,6 +35,43 @@ are required for the browser simulation.
 For the Python synthetic telemetry backend, use `python -m slam_dunk_bridge.demo`
 with `websockets==13.1`, then open `http://127.0.0.1:8765/?source=live`.
 That feed is also synthetic; it is distinct from the browser planner.
+
+## Unknown environments and mapping
+
+Choose Unknown A, B or C, then **Begin exploration**. A has staggered passages
+and occluded rooms; B has warehouse aisles and dead ends; C adds crossing moving
+obstacles. The map starts blank. A simulated 360-degree range sensor with 4.5 m
+range casts occluded rays approximately every 0.3 simulation seconds. It marks
+traversed cells free, first static hits occupied, and everything else unknown on
+a 0.5 m grid. Free tiles and occupied columns update the dashboard as observations
+arrive. Moving objects appear only when detected by the sensor.
+
+The full rectangles and actors live inside the simulator closure. Dashboard
+snapshots, map messages, History, goal validation and route searches use observed
+evidence; they do not receive the full layout. The browser source is inspectable,
+so this is a hidden-layout simulation, not a server-side secrecy boundary.
+Full-scene POV and obstacle editing are unavailable for these challenges.
+
+Exploration searches connected, clearance-checked observed free cells, selects
+viewpoints with predicted information gain through the observed grid, and replans
+as scans reveal obstacles. Manual goals and held guidance also require observed
+free space. Simulated physics retains an independent ground-truth collision
+guard, which rejects motion without exposing geometry to the planner. Synthetic
+actors yield near the vehicle, matching the open sandbox's convention.
+
+Observed-area and percentage metrics refer to the configured test bounds,
+including observed occupied cells. They do not prove complete building coverage.
+Unavailable viewpoints report blocked; frontier exhaustion requires repeated
+confirmation. Sealed areas may remain unknown. Pause freezes sensor and world
+time. Reset, environment changes and source changes clear the survey and History.
+Live ROS mode continues to use its existing backend; these challenges are
+browser simulations, not a new SLAM implementation or ROS-world integration.
+
+`test/unknown.test.mjs` verifies blank starts, bounded sensor disclosure, unknown
+goal rejection, observed-only routes, mapping growth in A/B/C, pause, reset,
+source isolation and dashboard controls. In 150 simulated seconds, deterministic
+runs expanded from about 205 observed cells to 1,465 (A), 1,578 (B) and 1,082 (C).
+These are test-run outcomes, not guaranteed coverage rates.
 
 ## Backend preservation
 

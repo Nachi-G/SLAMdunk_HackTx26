@@ -17,7 +17,7 @@ WEB_ASSETS = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     **{f"/{name}.mjs": (f"{name}.mjs", "text/javascript; charset=utf-8")
-       for name in ("app", "scene", "model", "adapter", "demo", "camera", "planner", "pov", "room", "mission-log", "mission-map", "room-layout")},
+       for name in ("app", "scene", "model", "adapter", "demo", "camera", "planner", "pov", "room", "mission-log", "mission-map", "room-layout", "unknown")},
 }
 
 

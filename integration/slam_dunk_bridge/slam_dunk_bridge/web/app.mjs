@@ -14,6 +14,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   const pageEvents = doc.defaultView ?? globalThis;
   let topFollow = true, mainFollow = true, toastTimer = null, expanded = null;
   let activePress = null, renewalTimer = null, showPlan = true, simulationView = 'map', editorTool = 'goal', selectedObject = null;
+  let environmentId='sandbox';
   function on(id,type,handler) { const el=typeof id==='string'?$(id):id;el.addEventListener(type,handler);removers.push(()=>el.removeEventListener(type,handler)); }
   function text(id,value) { $(id).textContent=String(value); }
   function pressed(id,value) { $(id).setAttribute('aria-pressed',String(value)); }
@@ -105,7 +106,24 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     text('footer-status',demo?'Browser demo · hold to steer':state.controlAvailable?'SANDO supervisor connected · leased steering':'Read-only telemetry · no command transport');
     const target=state.command?.type==='move'&&['accepted','moving'].includes(state.command.phase)?state.command.target:null;
     const simulation=demo?adapter.getSimulation():null;
-    $('planner-panel').hidden=!demo;
+    const hidden=simulation?.hidden===true;
+    $('planner-panel').hidden=!demo||hidden;
+    $('environment-panel').hidden=!demo;
+    $('environment').value=environmentId;
+    $('unknown-controls').hidden=!hidden;
+    text('environment-challenge',hidden?simulation.challenge:'Build and edit a visible obstacle course.');
+    if(hidden){
+      text('survey-status',simulation.status);text('survey-area',`${simulation.observedArea.toFixed(1)} m²`);
+      text('survey-coverage',`${(simulation.coverage*100).toFixed(1)}%`);text('survey-frontiers',simulation.frontiers);text('survey-scans',simulation.scanSequence);
+      $('survey-progress').style.width=`${simulation.coverage*100}%`;
+      $('begin-exploration').disabled=simulation.started;text('begin-exploration',simulation.started?'Exploration started':'Begin exploration ▶');
+      text('data-title',`${simulation.name} · discovering the environment`);text('data-note','The map is built from occluded range scans. Dark space has not been observed.');
+      text('exploration-mode',state.explorationMode==='paused'?'Exploration paused':simulation.started?'Frontier exploration':'Ready to explore');
+      text('command-status',simulation.status);text('control-help','Hold to guide through observed free space. Release to explore.');
+      text('scene-state',`MAPPING UNKNOWN ${simulation.environment}`);
+      $('empty-state').hidden=simulation.observedCells>0;
+      for(const button of doc.querySelectorAll('[data-direction]'))button.disabled=button.disabled||!simulation.started;
+    }
     const exploration=!demo?state.exploration:null;
     $('exploration-panel').hidden=!exploration;
     if(exploration){
@@ -114,14 +132,16 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
       text('exploration-unknown',exploration.unknown_voxels);text('exploration-scope',exploration.completion_scope);
     }
     $('simulation-views').hidden=!demo;
-    const isPov=demo&&simulationView==='pov';
+    const isPov=demo&&!hidden&&simulationView==='pov';
+    $('view-pov').hidden=hidden;
+    text('view-arena',hidden?'Survey 2D':'Build arena');
     $('main-canvas-wrap').classList.toggle('pov-mode',isPov);
-    text('viewer-kind',isPov?'SIMULATED CAMERA':demo&&simulationView==='arena'?'CLICK TO EDIT':'OCCUPIED GEOMETRY');
+    text('viewer-kind',hidden?'OBSERVED FREE SPACE / OCCUPIED POINTS':isPov?'SIMULATED CAMERA':demo&&simulationView==='arena'?'CLICK TO EDIT':'OCCUPIED GEOMETRY');
     $('main-canvas').setAttribute('aria-label',demo&&simulationView==='arena'?'Arena editor. Click to use the selected goal or obstacle tool. Drag to pan; scroll to zoom.':'Interactive three dimensional map. Drag to orbit; scroll to zoom.');
     $('pov-canvas').hidden=!isPov;$('pov-label').hidden=!isPov;$('main-canvas').hidden=isPov;
     $('main-follow').disabled=isPov;$('main-fit').disabled=isPov;
-    text('viewer-title',isPov?'Drone POV':demo&&simulationView==='arena'?'Build your obstacle course':'Live 3D environment');
-    text('viewer-hint',isPov?'SIMULATED POV · SPACE TO PAUSE':demo&&simulationView==='arena'?'CLICK TO EDIT · DRAG TO PAN · SCROLL TO ZOOM':'DRAG TO ORBIT · SCROLL TO ZOOM');
+    text('viewer-title',hidden?`${simulation.name} · observed map`:isPov?'Drone POV':demo&&simulationView==='arena'?'Build your obstacle course':'Live 3D environment');
+    text('viewer-hint',hidden?'SENSOR OBSERVATIONS ONLY · DARK SPACE IS UNKNOWN':isPov?'SIMULATED POV · SPACE TO PAUSE':demo&&simulationView==='arena'?'CLICK TO EDIT · DRAG TO PAN · SCROLL TO ZOOM':'DRAG TO ORBIT · SCROLL TO ZOOM');
     for(const [id,view]of [['view-pov','pov'],['view-arena','arena'],['view-map','map']]){pressed(id,simulationView===view);$(id).classList.toggle('selected',simulationView===view);}
     const selectedActor=selectedObject?.kind==='moving'?simulation?.movers.find(o=>o.id===selectedObject.id):null;
     const selectedBox=selectedObject?.kind==='static'?simulation?.placed.find(r=>r.every((v,i)=>v===selectedObject.box[i])):null;
@@ -131,8 +151,8 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     for(const axis of ['x','y'])pressed('selected-motion-'+axis,selectedActor?.axis===axis);
     if(simulation){text('obstacle-count',`${simulation.objectCount} / 24`);if(isPov)pov.setData(simulation);}
 
-    if(simulation){text('planner-status',simulation.status);text('planner-clearance',`${simulation.clearance.toFixed(2)} m`);text('planner-count',`${simulation.plans} / ${simulation.completed}`);}
-    const overlay=simulation?{planned:showPlan?simulation.path:[],movers:simulation.movers,goal:simulation.goal,predictions:simulation.predictions,heat:showPlan,selectedId:selectedActor?.id,selectedBox,margin:state.profile.inflation_hgp+state.profile.dyn_base_inflation_m+simulation.bodyRadius}:{goal:exploration?.goal??null};
+    if(simulation&&!hidden){text('planner-status',simulation.status);text('planner-clearance',`${simulation.clearance.toFixed(2)} m`);text('planner-count',`${simulation.plans} / ${simulation.completed}`);}
+    const overlay=simulation?{planned:showPlan?simulation.path:[],movers:simulation.movers,goal:simulation.goal,predictions:simulation.predictions,heat:showPlan,selectedId:selectedActor?.id,selectedBox,freeCells:simulation.freeCells??[],cellSize:simulation.cellSize,margin:state.profile.inflation_hgp+state.profile.dyn_base_inflation_m+simulation.bodyRadius}:{goal:exploration?.goal??null};
     scenes.top.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,placed:simulation?.placed??[],staticMargin:state.profile.inflation_hgp+.24,...overlay});
     scenes.main.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,placed:simulation?.placed??[],staticMargin:state.profile.inflation_hgp+.24,...overlay});
     scenes.history.setData({points:display.combinedPoints,pose:display.pose,trail:display.trail,target:null});
@@ -149,15 +169,17 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   });
 
   const settings=new URLSearchParams(globalThis.location?.search??'');
+  if(['A','B','C'].includes(settings.get('environment')))environmentId=settings.get('environment');
   function connectSource(source){
     releasePress('source changed');
     selectedObject=null;
-    if(source==='demo')adapter.startDemo();
+    if(source==='demo')adapter.startDemo({environment:environmentId==='sandbox'?null:environmentId});
     else{adapter.connectLive();const control=settings.get('control');if(control&&!adapter.connectControl(control))toast('Invalid command supervisor URL');}
     setTopFollow(true);setMainFollow(true);
     if(source==='live'){scenes.main.setMode('perspective');}else applySimulationView(simulationView);
   }
   function applySimulationView(view){
+    if(view==='pov'&&adapter.getSimulation()?.hidden)return;
     simulationView=view;
     if(view==='arena'){setMainFollow(false);scenes.main.setMode('top');scenes.main.fit();}
     else if(view==='map'){scenes.main.setMode('perspective');setMainFollow(true);}
@@ -166,6 +188,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   }
   function editArena(point,objectPoint){
     if(store.getState().source!=='demo')return;
+    if(adapter.getSimulation()?.hidden){sendGoal(point);return;}
     if(editorTool==='goal'&&objectPoint){
       const sim=adapter.getSimulation(),actor=sim?.movers.find(o=>o.axis&&Math.hypot(o.position[0]-objectPoint[0],o.position[1]-objectPoint[1])<.01);
       const box=sim?.placed.find(r=>objectPoint[0]>=r[0]&&objectPoint[0]<=r[2]&&objectPoint[1]>=r[1]&&objectPoint[1]<=r[3]);
@@ -199,7 +222,13 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   }
   on('send-goal','click',()=>sendGoal(MISSIONS[Number($('mission-goal').value)]??MISSIONS[1]));
   on('show-plan','change',()=>{showPlan=$('show-plan').checked;store.tick(Date.now());});
-  on('reset-lab','click',()=>{releasePress('simulation reset');adapter.startDemo();setTopFollow(true);applySimulationView(simulationView);toast('Obstacle course restarted');});
+  on('reset-lab','click',()=>{releasePress('simulation reset');adapter.startDemo({environment:environmentId==='sandbox'?null:environmentId});setTopFollow(true);applySimulationView(simulationView);toast('Simulation restarted');});
+  on('environment','change',()=>{
+    const value=$('environment').value;if(!['sandbox','A','B','C'].includes(value)||store.getState().source!=='demo')return;
+    environmentId=value;selectedObject=null;editorTool='goal';simulationView='map';connectSource('demo');toast(value==='sandbox'?'Open sandbox ready':`Unknown ${value} ready · begin exploration to scan`);
+  });
+  on('begin-exploration','click',()=>{releasePress('Exploration started');const result=adapter.startExploration();if(!result.ok)toast(result.reason);store.tick(Date.now());});
+  on('reset-survey','click',()=>{releasePress('Survey reset');adapter.startDemo({environment:environmentId==='sandbox'?null:environmentId});setTopFollow(true);applySimulationView('map');toast('Survey reset · map cleared');});
   for(const id of ['top-canvas','main-canvas','pov-canvas'])on(id,'keydown',event=>{if(event.key===' '){event.preventDefault();$('stop').click();}});
   on('live-tab','click',()=>changeView('live'));on('history-tab','click',()=>changeView('history'));
   on('open-history','click',()=>{changeView('history');$('history-tab').focus();});on('return-live','click',()=>{changeView('live');$('live-tab').focus();});

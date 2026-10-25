@@ -17,3 +17,5 @@ const {runMissionMapTests}=await import('./mission_map.test.mjs');
 console.log('Mission map and recording:',JSON.stringify(runMissionMapTests()));
 const {runBackupTests}=await import('./backup_integration.test.mjs');
 console.log('Combined Backup dashboard:',JSON.stringify(runBackupTests()));
+const {runUnknownTests}=await import('./unknown.test.mjs');
+console.log('Unknown environments and live mapping:',JSON.stringify(runUnknownTests()));

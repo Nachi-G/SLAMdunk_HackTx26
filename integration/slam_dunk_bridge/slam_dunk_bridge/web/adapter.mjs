@@ -1,4 +1,5 @@
 import {createDemo} from './demo.mjs';
+import {createUnknownDemo,UNKNOWN_ENVIRONMENTS} from './unknown.mjs';
 
 /** Telemetry and leased control use separate sockets. /stream stays read-only. */
 export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSocket,clock=()=>Date.now(),schedule=globalThis.setInterval,cancel=globalThis.clearInterval}={}) {
@@ -65,7 +66,7 @@ export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSock
     if(held&&store.getState().source==='live'&&(store.getState().view!=='live'||store.getState().stale.pose||store.getState().stale.map||store.getState().connection!=='connected'))releaseSteering('Live telemetry unavailable');
   };
   const adapter={
-    startDemo(){teardown();store.reset('demo');if(room)store.setSpeedMode('standard');demo=createDemo(store,26,{room});demo.step(clock());timer=schedule(tick,100);return true;},
+    startDemo({environment=null}={}){if(environment&&(!UNKNOWN_ENVIRONMENTS.some(w=>w.id===environment)||room))return false;teardown();store.reset('demo');if(room)store.setSpeedMode('standard');demo=environment?createUnknownDemo(store,environment):createDemo(store,26,{room});demo.step(clock());timer=schedule(tick,100);return true;},
     connectLive(url){
       const fallback=globalThis.location?`${location.protocol==='https:'?'wss':'ws'}://${location.host}/stream`:null;
       const parsed=validUrl(url??fallback,'/stream');if(!parsed||typeof WebSocketImpl!=='function')return false;
@@ -94,7 +95,7 @@ export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSock
       if(held)return {ok:false,reason:'A steering direction is already held'};
       if(releasePending)return {ok:false,reason:'Waiting for steering release acknowledgment'};
       if(store.getState().source==='demo'){
-        if(room&&!demo?.snapshot().started)return {ok:false,reason:'Click Start before pushing the drone'};
+        if((room||demo?.snapshot().hidden)&&!demo?.snapshot().started)return {ok:false,reason:'Click Start before pushing the drone'};
         const result=store.startSteering(direction,clock());if(result.ok){held={requestId:result.steering.leaseId};demo?.clearManual();}return result;
       }
       const s=store.getState();
@@ -129,10 +130,11 @@ export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSock
       return {ok:send({type:'resume',request_id:requestId(),epoch:store.getState().controlEpoch})};
     },
     // Compatibility for older callers; dashboard buttons use leased steering.
-    command(direction,distance=1){const result=store.command(direction,distance);if(result.ok)demo?.move(result.command);return result;},
+    command(direction,distance=1){if(demo?.snapshot().hidden)return {ok:false,reason:'Use held guidance or choose an observed free-space target'};const result=store.command(direction,distance);if(result.ok)demo?.move(result.command);return result;},
     stop(){releaseSteering('Legacy stop');const result=store.stop();if(result.ok)demo?.stop();return result;},
     editSimulation(action,point,kind,options){
       if(store.getState().source!=='demo'||!demo)return {ok:false,reason:'Obstacle editing is only available in the synthetic demo'};
+      if(demo.snapshot().hidden)return {ok:false,reason:'Hidden challenge environments cannot be edited'};
       if(action==='add')return demo.addObstacle(point,kind,options);
       if(action==='remove')return demo.removeObstacle(point);
       if(action==='motion')return demo.setObjectMotion(point,kind);
@@ -140,6 +142,7 @@ export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSock
       return {ok:false,reason:'Unknown scene action'};
     },
     startSimulation(){if(!room||store.getState().source!=='demo'||!demo)return {ok:false,reason:'Start is only available in the flight room'};const result=demo.start();store.resumeExploration();return result;},
+    startExploration(){if(store.getState().source!=='demo'||!demo?.snapshot().hidden)return {ok:false,reason:'Choose an unknown environment first'};const result=demo.start();if(result.ok)store.resumeExploration();return result;},
     getSimulation(){return demo?.snapshot()??null;},
     setSimulationGoal(point){if(store.getState().source!=='demo')return {ok:false,reason:'Simulation goals are only available in the synthetic demo'};return demo?.setGoal(point)??{ok:false,reason:'Start the demo first'};},
     setProfile(value){return store.setProfile(value);},

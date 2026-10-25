@@ -119,6 +119,10 @@ export function createScene(canvas, options = {}) {
       line([center[0]-extent,y,0],[center[0]+extent,y,0],'#87b4a30d');
     }
     if(data.room)drawFixtures();
+    // Only cells traversed by sensor rays are supplied for hidden environments.
+    // Dark canvas remains unknown; there is no ground-truth floor overlay.
+    for(const p of data.freeCells??[]){const h=(data.cellSize??.5)/2;
+      polygon([[p[0]-h,p[1]-h,0],[p[0]+h,p[1]-h,0],[p[0]+h,p[1]+h,0],[p[0]-h,p[1]+h,0]],'#73cbb51a');}
     // Render bounded source geometry. Dots represent occupied measurements only.
     for(const p of data.room?[]:data.points){
       const q=project(p);if(!q||q[0]<-5||q[0]>width+5||q[1]<-5||q[1]>height+5)continue;

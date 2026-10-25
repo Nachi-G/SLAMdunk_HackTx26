@@ -1586,3 +1586,4 @@ h2{
 #selected-object[hidden]{display:none}
 .planner-content a.wide-link{display:block;text-decoration:none;color:#c9f76b;line-height:1.5;padding-bottom:10px}
 .exploration-panel .planner-content{padding-top:0}
+.survey-progress{height:5px;margin:10px 0 14px;background:#293b3c;border-radius:4px;overflow:hidden}.survey-progress i{display:block;width:0;height:100%;background:#c9f76b;transition:width .3s}.environment-panel .planner-content{padding-top:0}.environment-panel .lab-primary:disabled{opacity:.55;cursor:default}
