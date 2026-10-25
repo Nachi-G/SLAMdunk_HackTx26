@@ -1,0 +1,22 @@
+{
+  "source_commit": "1a738df919f9abe60cee3c1afbecd72579da8f6f",
+  "source_files_sha256": {
+    "src/sando/sando_node.cpp": "a6d2d1b17d6006b7ad81fda7fb69c463dc66a7db1b444f1f5280ecc86fbb9f20",
+    "src/sando/sando.cpp": "95c69af179ef8c72457219348781ba6d14c245b8681399e48947c67d517875d8",
+    "src/hgp/hgp_manager.cpp": "4193c8a541527b047dd3de322a5e2e1d25ff8cdc2f948c897dd5bfbb22f72824",
+    "src/hgp/utils.cpp": "3a07b40967a9ab6010536b7de98eea579ecf0392c01c43f79a4e036a11442746",
+    "src/hgp/hgp_planner.cpp": "2682dde9f5c2ad9680e085223fd3e1009b38849ce6993ef8c90172129ea8accd",
+    "src/hgp/graph_search.cpp": "292e0527cf5ba89f62afeb48bcc82d555e291ae3b52b52c853218d069b3e95e6",
+    "src/sando/utils.cpp": "6a5a441f56e27788ea1f3dafd387d156d8e9f6d5d6b3ca5dde2e6b7bae01d9b8",
+    "src/sando/gurobi_solver.cpp": "f8a18c42cd702a5e2198a5de3f58adf2721cbe7a6c1dbe8f208cc05c51705b28"
+  },
+  "adaptation": "CAR_PLANAR_V1",
+  "changes": [
+    "ground endpoints use default_goal_z with zero vertical derivatives",
+    "all cubic Bezier Z control points constrained to ground plane",
+    "planner-only build; no Gazebo Classic plugins or fake_sim",
+    "planner-only dependency metadata and copied unchanged DecompROS header",
+    "correct vehicle_type string logging"
+  ],
+  "limits": "Skid-steer tracking is separate; upstream UAV tracking/safety guarantees are not established for this car."
+}
