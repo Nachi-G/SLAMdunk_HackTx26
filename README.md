@@ -2,6 +2,8 @@
 
 Disaster reconnaissance drone prototype built around SANDO's ROS 2 / Gazebo Classic pipeline.
 
+The [furnished house test environment](simulation/house/README.md) provides a standalone Gazebo Harmonic (Gazebo Sim 8) world with eight rooms, furniture, two moving patrol obstacles, and a ceiling fan. Launch it with `bash simulation/house/run_house.sh` on a Harmonic host; a static baseline is included. The existing SANDO robot integration still targets Gazebo Classic.
+
 The [live map bridge and browser viewer](integration/slam_dunk_bridge/README.md) expose the existing ROS map and drone pose with bounded updates. A synthetic demo runs without ROS; the ROS adapter targets the existing simulation topics.
 
 Start with the [sensor and reconstruction audit](docs/sando-sensor-reconstruction-entrypoints.md) and [selected SANDO files and runtime setup](integration/README.md). The first milestone is live geometric mapping and operator goals; offline Nerfstudio/Splatfacto reconstruction follows verified RGB capture and camera poses.
