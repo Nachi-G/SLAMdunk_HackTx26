@@ -1,12 +1,21 @@
-# Flight room and operator dashboard
+# Combined operator dashboard and flight room
 
 Local, buildless browser UI. No Gazebo, ROS, npm install, CDN, or API key is
 needed to inspect the synthetic mission. It is a UI prototype, not a validated
 flight-control implementation.
 
-## Simple flight room (default)
 
-The default page is a 32 × 24 m room with one drone, three interior partitions,
+The default dashboard preserves Nachi’s Live/History layout and integrates Rishi’s
+browser target selection, static/moving obstacle editing, X/Y object motion,
+planned paths, predictions and simulated POV. Use **Build arena** to edit the
+simulation; select an added object with the Goal tool to change its motion.
+**Open furnished flight room** retains the separate room and saved mission replay.
+Live mode displays validated frontier status from the ROS supervisor, with editing
+and unsupported physical Pause disabled. See [Backup integration](../../docs/backup-integration.md).
+
+## Furnished flight room (`/flight-room.html`)
+
+The furnished editor is a 32 × 24 m room with one drone, three interior partitions,
 a sofa, armchair, coffee table, work desk, work island, and shelving. The center
 remains open for flight. Furnishings are fixed collision geometry; no moving
 objects are preloaded. Choose **Fly here**, **Static object**,
@@ -52,10 +61,10 @@ segments and swept checks. It plans horizontally with conservative full-height
 obstacle bounds, with vertical transitions to the selected altitude. It does not
 run the full ROS/Gurobi/MINVO solver, and segment joins can have acceleration
 discontinuities. The existing integration dashboard is at **/dashboard.html**;
-**/?source=live** redirects there for the bridge connection.
+**/?source=live** opens the dashboard directly for the bridge connection.
 
-The default view is implemented in `web/room.mjs` and `web/room.css`; the operator
-dashboard remains in `web/dashboard.html` with `web/app.mjs`. Both are bundled
+The furnished editor is implemented in `web/room.mjs` and `web/room.css`; the operator
+dashboard is served at `/` and `/dashboard.html` with `web/app.mjs`. Both are bundled
 and explicitly allowlisted by the bridge server. `test/room.test.mjs` covers 3D
 picking, static/moving object edits, goal altitude, pause, push handoff, keyboard
 release on blur, reset, and six simulated minutes of navigation.
@@ -69,7 +78,7 @@ in the parent SANDO checkout):
 python -m http.server 8080 --bind 127.0.0.1 --directory slam_dunk_bridge/web
 ```
 
-Open **http://127.0.0.1:8080/** for the flight room, or **http://127.0.0.1:8080/dashboard.html** for the operator dashboard. The synthetic mission is visibly labeled. The
+Open **http://127.0.0.1:8080/** for the combined dashboard, or **http://127.0.0.1:8080/flight-room.html** for the furnished editor. The synthetic mission is visibly labeled. The
 Live screen contains the top view, manual controls, speed, margin profile,
 main 3D view, drone camera panel, battery, and flight time. History
 contains the combined-site recorded map, replay cursor, playback, and details. Orbit,
@@ -82,7 +91,7 @@ snapshots do not establish free space, and eviction can remove old geometry.
 
 ## Connect the existing bridge
 
-The Python bridge serves the flight room at `/` and the operator dashboard at `/dashboard.html`; the original viewer remains
+The Python bridge serves the operator dashboard at `/` and `/dashboard.html`, and the furnished editor at `/flight-room.html`; the original viewer remains
 at `/legacy`. Run the bridge as described in [README.md](README.md), then open
 **http://127.0.0.1:8765/?source=live**, or choose Bridge in the source selector.
 The static preview server alone has no `/stream` endpoint. A failed live
@@ -194,7 +203,7 @@ and ten simulated minutes of autonomous navigation and patrol encounters.
 
 ## Judge-built course and drone POV
 
-Refresh the dashboard after updating the files. **Drone POV** is the default demo
+Refresh the dashboard after updating the files. **3D map** is the default demo
 view: a local first-person projection of the current vehicle pose, walls,
 furniture, moving patrols, and judge-added obstacles. This is labeled synthetic
 camera rendering and is separate from the external RGB stream panel. It uses
@@ -227,7 +236,7 @@ ray geometry. UI tests cover editing tools, view switching, and source isolation
 ## Mission map and replay
 
 Refresh the flight room to load recording support, then use **Mission map &
-replay** in the header. It switches to `/#mission-map` in the same browser tab. **Flight room · controls**
+replay** in the header. It switches to `/flight-room.html#mission-map` in the same browser tab. **Flight room · controls**
 and **Back to room controls** return to the existing room without a reload or
 reset. The simulation and recorder stay mounted while the replay view is open;
 push input is released on switching and cannot be started from replay. The old

@@ -65,4 +65,4 @@ export function mountMissionMap({document:doc=globalThis.document,storage,autoPo
   refresh();
   return Object.freeze({scene,refresh,getView:()=>reviewData(run(),frameAt(run(),cursor),context),destroy(){clearInterval(pollTimer);clearInterval(playTimer);for(const remove of removers)remove();scene.destroy();}});
 }
-if(typeof document!=='undefined'&&document.getElementById('review-canvas')&&!document.getElementById('room-canvas'))globalThis.location.replace('/#mission-map');
+if(typeof document!=='undefined'&&document.getElementById('review-canvas')&&!document.getElementById('room-canvas'))globalThis.location.replace('/flight-room.html#mission-map');

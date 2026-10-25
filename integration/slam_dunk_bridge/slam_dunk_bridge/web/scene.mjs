@@ -148,7 +148,7 @@ export function createScene(canvas, options = {}) {
       ctx.setLineDash([3,4]);ctx.strokeStyle='#ffbd6b55';ctx.beginPath();ctx.arc(p[0],p[1],radius+p[2]*(data.margin??.79),0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
       ctx.font='9px Segoe UI';ctx.fillStyle='#ffcf90';ctx.fillText(actor.id+(actor.axis==='x'?' ↔ X':actor.axis==='y'?' ↕ Y':''),p[0]+radius+4,p[1]-5);
     }
-    if(data.room&&data.heat)for(const prediction of data.predictions??[])for(let i=1;i<prediction.length;i++)line(prediction[i-1],prediction[i],'#ffbd6b88',1,[3,5]);
+    if(data.heat)for(const prediction of data.predictions??[])for(let i=1;i<prediction.length;i++)line(prediction[i-1],prediction[i],'#ffbd6b88',1,[3,5]);
     drawDrone();
     // A restrained world orientation indicator in the corner.
     if(mode!=='top'){ctx.font='8px Segoe UI';ctx.fillStyle='#849b90';ctx.fillText('Z',width-26,height-53);ctx.strokeStyle='#8da894';ctx.beginPath();ctx.moveTo(width-23,height-27);ctx.lineTo(width-23,height-45);ctx.stroke();ctx.strokeStyle='#6d8e81';ctx.beginPath();ctx.moveTo(width-23,height-27);ctx.lineTo(width-38,height-20);ctx.moveTo(width-23,height-27);ctx.lineTo(width-9,height-20);ctx.stroke();}
@@ -160,7 +160,7 @@ export function createScene(canvas, options = {}) {
     listen('pointermove',event=>{if(!drag)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(drag.pan){const scale=distance/Math.max(1,Math.min(width,height));center[0]-=dx*scale;center[1]+=dy*scale;}else{azimuth-=dx*.008;elevation=Math.max(.12,Math.min(1.5,elevation+dy*.008));}drag.x=event.clientX;drag.y=event.clientY;follow=false;options.onFollowChange?.(false);dirty=true;});
     listen('dblclick',event=>{if(mode!=='top'||!options.onGoal)return;const rect=canvas.getBoundingClientRect(),scale=Math.min(width,height)/distance;options.onGoal([center[0]+(event.clientX-(rect.left??0)-width/2)/scale,center[1]-(event.clientY-(rect.top??0)-height/2)/scale,data.pose?.position[2]??1.8]);});
     listen('pointerup',event=>{
-      if(drag&&(mode==='top'||data.room)&&options.onMapClick&&Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<5){const p=pick(event,0);if(p)options.onMapClick([p[0],p[1],data.pose?.position[2]??1.8],data.room?pickObject(event):null);}
+      if(drag&&(mode==='top'||data.room)&&options.onMapClick&&Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<5){const p=pick(event,0);if(p)options.onMapClick([p[0],p[1],data.pose?.position[2]??1.8],pickObject(event));}
       endDrag();
     });listen('pointercancel',endDrag);listen('lostpointercapture',endDrag);
     listen('wheel',event=>{autoFit=false;event.preventDefault();distance=Math.max(3,Math.min(1200,distance*Math.exp(Math.max(-200,Math.min(200,event.deltaY))*.002)));dirty=true;},{passive:false});

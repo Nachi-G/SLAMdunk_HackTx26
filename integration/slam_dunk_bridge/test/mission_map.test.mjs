@@ -8,7 +8,7 @@ export function runMissionMapTests(){
   const hits=scanRoom({position:[0,0,1.8],obstacles:[[2,-1,3,1],[10,-10,10.2,10]],movers:[]});
   assert.ok(hits.some(p=>p[0]===2&&p[1]===0),'scan hits nearest obstacle');assert.ok(hits.every(p=>Math.hypot(p[0],p[1])<=8.01),'range limited');assert.ok(!hits.some(p=>p[0]>3),'occluded and out-of-range wall is not observed');
   const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
-  const env=createTestEnvironment(1100),doc=createTestMarkup('index.html'),get=id=>doc.getElementById(id);let room,map;
+  const env=createTestEnvironment(1100),doc=createTestMarkup('flight-room.html'),get=id=>doc.getElementById(id);let room,map;
   try{
     room=mountRoom({document:doc,recordingStorage:storage});env.advance(100);
     const clickWorld=p=>{const q=room.scene.project(p),event={clientX:q[0],clientY:q[1],pointerId:1,button:0};get('room-canvas').fire('pointerdown',event);get('room-canvas').fire('pointerup',event);};

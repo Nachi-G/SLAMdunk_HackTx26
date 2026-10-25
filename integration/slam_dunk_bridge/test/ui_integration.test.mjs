@@ -4,6 +4,10 @@ import {mountDashboard} from '../slam_dunk_bridge/web/app.mjs';
 import {createScene} from '../slam_dunk_bridge/web/scene.mjs';
 import {createCameraFeed} from '../slam_dunk_bridge/web/camera.mjs';
 
+// Keep exhaustive coverage by default; allow a bounded local smoke sample.
+const SCENARIOS=Number(process.env.SLAMDUNK_UI_SCENARIOS??300);
+if(!Number.isInteger(SCENARIOS)||SCENARIOS<1||SCENARIOS>300)throw new Error('SLAMDUNK_UI_SCENARIOS must be 1..300');
+
 // A deliberately small DOM/canvas test double, not a browser-layout assertion.
 // These scenarios execute the real app event handlers, model, demo and adapter.
 class Element {
@@ -40,7 +44,7 @@ function canvasContext() {
   return context;
 }
 
-function markup(filename='dashboard.html') {
+function markup(filename='index.html') {
   const html=readFileSync(new URL(`../slam_dunk_bridge/web/${filename}`,import.meta.url),'utf8');
   const elements=new Map();
   for(const m of html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)){
@@ -81,7 +85,7 @@ function environment(seed) {
 
 export function runIntegrationTests() {
   const counts={fullDashboardScenarios:0,holdReleaseScenarios:0,cameraLifecycleScenarios:0,sceneLifecycleScenarios:0,sceneInvalidConstructionCases:0};
-  for(let seed=0;seed<300;seed++) {
+  for(let seed=0;seed<SCENARIOS;seed++) {
     const env=environment(seed),doc=markup(),get=id=>doc.getElementById(id);
     let app;
     try {
@@ -136,7 +140,7 @@ export function runIntegrationTests() {
       counts.fullDashboardScenarios++;
     } finally {app?.destroy();env.restore();}
   }
-  for(let seed=0;seed<300;seed++) {
+  for(let seed=0;seed<SCENARIOS;seed++) {
     const env=environment(seed),doc=markup(),button=doc.directions[seed%4];let app;
     try{
       app=mountDashboard({document:doc});env.advance(200);
@@ -163,7 +167,7 @@ export function runIntegrationTests() {
       counts.holdReleaseScenarios++;
     }finally{app?.destroy();assert.equal(env.intervals.size,0);env.restore();}
   }
-  for(let seed=0;seed<300;seed++) {
+  for(let seed=0;seed<SCENARIOS;seed++) {
     const image=new Element(),empty=new Element(),status=new Element(),note=new Element();
     const camera=createCameraFeed({image,empty,status,note,baseUrl:'http://127.0.0.1:8080/'});
     assert.equal(camera.connect(`http://127.0.0.1:${8081+seed}/stream?topic=%2FNX01%2Fd435%2Fcolor%2Fimage_raw`),true);
@@ -179,7 +183,7 @@ export function runIntegrationTests() {
     camera.destroy();assert.equal(camera.connect('http://robot/feed'),false);assert.equal(camera.setVisible(true),false);
     counts.cameraLifecycleScenarios++;
   }
-  for(let seed=0;seed<300;seed++) {
+  for(let seed=0;seed<SCENARIOS;seed++) {
     const env=environment(seed),canvas=new Element();canvas.context=canvasContext();canvas.boxWidth=200+seed;canvas.boxHeight=150+seed%100;
     let scene;
     try {
@@ -207,7 +211,8 @@ export function runObstacleLabTests(){
   try{
     app=mountDashboard({document:doc});env.advance(100);
     assert.equal(get('planner-panel').hidden,false);
-    assert.equal(get('pov-canvas').hidden,false);
+    assert.equal(get('pov-canvas').hidden,true);
+    get('obstacle-kind').value='crate';
     get('tool-add').click();assert.equal(get('main-canvas').hidden,false);assert.equal(get('view-arena').getAttribute('aria-pressed'),'true');
     const point={clientX:331.05,clientY:165.79,pointerId:12,button:0};
     get('top-canvas').fire('pointerdown',point);get('top-canvas').fire('pointerup',point);

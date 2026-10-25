@@ -5,7 +5,7 @@ import {MissionStore} from '../slam_dunk_bridge/web/model.mjs';
 import {createDemo} from '../slam_dunk_bridge/web/demo.mjs';
 
 export function runRoomTests(){
-  const env=createTestEnvironment(900),doc=createTestMarkup('index.html'),get=id=>doc.getElementById(id);let app;
+  const env=createTestEnvironment(900),doc=createTestMarkup('flight-room.html'),get=id=>doc.getElementById(id);let app;
   try{
     // The legacy mock supplies a dashboard source selector; room has none.
     app=mountRoom({document:doc});env.advance(100);

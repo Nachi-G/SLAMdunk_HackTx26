@@ -6,6 +6,12 @@ const finite = n => typeof n === 'number' && Number.isFinite(n);
 const vector = (v,n) => Array.isArray(v) && v.length===n && v.every(finite);
 const frozenVector = v => Object.freeze([...v]);
 const empty = () => Object.freeze([]);
+function explorationStatus(value) {
+  if(!value||value.mode!=='frontier'||typeof value.state!=='string'||value.state.length>64||typeof value.reason!=='string'||value.reason.length>1024||typeof value.completion_scope!=='string'||value.completion_scope.length>256)return null;
+  const counts=['map_revision','scan_sequence','frontier_cells','reachable_cells','unknown_voxels','free_voxels','occupied_voxels','failed_viewpoints'];
+  if(!counts.every(k=>Number.isSafeInteger(value[k])&&value[k]>=0)||!(value.goal===null||vector(value.goal,3)&&value.goal.every(v=>Math.abs(v)<=1e6)))return null;
+  return Object.freeze({mode:'frontier',state:value.state,reason:value.reason,completion_scope:value.completion_scope,...Object.fromEntries(counts.map(k=>[k,value[k]])),goal:value.goal===null?null:frozenVector(value.goal)});
+}
 function timestamp(stamp) {
   if(!stamp||!Number.isSafeInteger(stamp.sec)||stamp.sec<0||!Number.isInteger(stamp.nanosec)||stamp.nanosec<0||stamp.nanosec>=1e9)return NaN;
   const value=stamp.sec*1000+stamp.nanosec/1e6;
@@ -15,7 +21,7 @@ function profile(value,source) {
   return Object.freeze({value,inflation_hgp:Number((.45+.45*value/100).toFixed(4)),dyn_base_inflation_m:Number((.1+.2*value/100).toFixed(4)),state:source==='demo'?'demo':'proposal',applied:null});
 }
 function initial(source) {
-  return {source,connection:source==='demo'?'demo':'connecting',view:'live',frameId:null,mapPoints:empty(),combinedPoints:empty(),pose:null,trail:empty(),speed:null,battery:null,flightSeconds:null,profile:profile(0,source),speedMode:'precision',speedLimit:1,command:null,statusMessage:source==='demo'?'Synthetic mission · no vehicle connected':'Waiting for bridge data',stale:Object.freeze({map:true,pose:true}),history:empty(),selectedTime:null,playing:false,rejected:0,mode:source==='demo'?'synthetic_demo':'map_snapshot',controlAvailable:source==='demo',controlConnection:source==='demo'?'demo':'unavailable',controlCapabilities:Object.freeze({steering:source==='demo',pause:source==='demo'}),controlEpoch:0,controlReady:source==='demo',explorationMode:source==='demo'?'autonomous':'waiting',steering:null};
+  return {source,connection:source==='demo'?'demo':'connecting',view:'live',frameId:null,mapPoints:empty(),combinedPoints:empty(),pose:null,trail:empty(),speed:null,battery:null,flightSeconds:null,profile:profile(0,source),speedMode:'precision',speedLimit:1,command:null,statusMessage:source==='demo'?'Synthetic mission · no vehicle connected':'Waiting for bridge data',stale:Object.freeze({map:true,pose:true}),history:empty(),selectedTime:null,playing:false,rejected:0,mode:source==='demo'?'synthetic_demo':'map_snapshot',controlAvailable:source==='demo',controlConnection:source==='demo'?'demo':'unavailable',controlCapabilities:Object.freeze({steering:source==='demo',pause:source==='demo'}),controlEpoch:0,controlReady:source==='demo',explorationMode:source==='demo'?'autonomous':'waiting',steering:null,exploration:null};
 }
 
 export class MissionStore {
@@ -135,7 +141,7 @@ export class MissionStore {
   setControlConnection(connection) {
     if(!['connecting','connected','disconnected','unavailable'].includes(connection)||this.state.source!=='live')return false;
     const disconnected=connection!=='connected';
-    this._emit({controlConnection:connection,...(connection==='connecting'?{controlEpoch:0}:{}),...(disconnected?{controlAvailable:false,controlReady:false,steering:null,explorationMode:'waiting',controlCapabilities:Object.freeze({steering:false,pause:false})}:{})});
+    this._emit({controlConnection:connection,...(connection==='connecting'?{controlEpoch:0}:{}),...(disconnected?{controlAvailable:false,controlReady:false,steering:null,exploration:null,explorationMode:'waiting',controlCapabilities:Object.freeze({steering:false,pause:false})}:{})});
     return true;
   }
   ingestControl(message) {
@@ -143,7 +149,7 @@ export class MissionStore {
     if(this.state.source!=='live'||!message||message.protocol_version!==1||message.type!=='control_status'||!Number.isSafeInteger(message.epoch)||message.epoch<0||message.epoch<this.state.controlEpoch||!modes.includes(message.mode)||typeof message.ready!=='boolean'||!message.capabilities||typeof message.capabilities.steering!=='boolean'||typeof message.capabilities.pause!=='boolean'||message.ttl_ms!==500||!(message.lease_id===null||typeof message.lease_id==='string'&&message.lease_id.length>0&&message.lease_id.length<=128)||typeof message.reason!=='string'||message.reason.length>1024)return false;
     if(message.mode==='steering'&&!message.lease_id)return false;
     const steering=message.mode==='steering'?Object.freeze({leaseId:message.lease_id,epoch:message.epoch,direction:message.direction??null}):null;
-    this._emit({controlConnection:'connected',controlAvailable:message.ready&&message.capabilities.steering,controlReady:message.ready,controlCapabilities:Object.freeze({...message.capabilities}),controlEpoch:message.epoch,explorationMode:message.mode,steering,command:Object.freeze({type:'control',phase:message.mode,message:message.reason||`Exploration ${message.mode}`})});
+    this._emit({controlConnection:'connected',controlAvailable:message.ready&&message.capabilities.steering,controlReady:message.ready,controlCapabilities:Object.freeze({...message.capabilities}),controlEpoch:message.epoch,explorationMode:message.mode,exploration:explorationStatus(message.exploration),steering,command:Object.freeze({type:'control',phase:message.mode,message:message.reason||`Exploration ${message.mode}`})});
     return true;
   }
   startSteering(direction,now=Date.now()) {

@@ -131,6 +131,6 @@ export function mountRoom({document:doc=globalThis.document,autoStart=true,recor
   return Object.freeze({store,adapter,scene,recorder,review,destroy(){release();unsubscribe();recorder.flush();adapter.dispose();scene.destroy();review.destroy();clearTimeout(toastTimer);for(const remove of removers)remove();}});
 }
 if(typeof document!=='undefined'&&document.getElementById('room-canvas')){
-  if(new URLSearchParams(globalThis.location?.search??'').get('source')==='live')globalThis.location.replace('/dashboard.html'+globalThis.location.search);
+  if(new URLSearchParams(globalThis.location?.search??'').get('source')==='live')globalThis.location.replace('/'+globalThis.location.search);
   else mountRoom();
 }

@@ -13,7 +13,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   const removers = [], scenes = {};
   const pageEvents = doc.defaultView ?? globalThis;
   let topFollow = true, mainFollow = true, toastTimer = null, expanded = null;
-  let activePress = null, renewalTimer = null, showPlan = true, simulationView = 'pov', editorTool = 'goal';
+  let activePress = null, renewalTimer = null, showPlan = true, simulationView = 'map', editorTool = 'goal', selectedObject = null;
   function on(id,type,handler) { const el=typeof id==='string'?$(id):id;el.addEventListener(type,handler);removers.push(()=>el.removeEventListener(type,handler)); }
   function text(id,value) { $(id).textContent=String(value); }
   function pressed(id,value) { $(id).setAttribute('aria-pressed',String(value)); }
@@ -21,8 +21,8 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   function formatTime(seconds) { if(!Number.isFinite(seconds)||seconds<0)return '—';const value=Math.floor(seconds),m=Math.floor(value/60),s=value%60;return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; }
   function setTopFollow(value) { topFollow=value;scenes.top?.setFollow(value);pressed('top-follow',value);text('top-follow',`Follow ${value?'on':'off'} ◎`); }
   function setMainFollow(value) { mainFollow=value;scenes.main?.setFollow(value);pressed('main-follow',value);$('main-follow').classList.toggle('active',value); }
-  scenes.top=createScene($('top-canvas'),{mode:'top',local:true,follow:true,onFollowChange:value=>setTopFollow(value),onGoal:point=>{if(editorTool==='goal')sendGoal(point);},onMapClick:point=>editArena(point)});
-  scenes.main=createScene($('main-canvas'),{mode:'perspective',follow:true,onFollowChange:value=>setMainFollow(value),onMapClick:point=>editArena(point)});
+  scenes.top=createScene($('top-canvas'),{mode:'top',local:true,follow:true,onFollowChange:value=>setTopFollow(value),onGoal:point=>{if(editorTool==='goal')sendGoal(point);},onMapClick:(point,object)=>editArena(point,object)});
+  scenes.main=createScene($('main-canvas'),{mode:'perspective',follow:true,onFollowChange:value=>setMainFollow(value),onMapClick:(point,object)=>editArena(point,object)});
   scenes.history=createScene($('history-canvas'),{mode:'top',follow:false});
   const pov=createPov($('pov-canvas'));
   const camera=createCameraFeed({image:$('camera-image'),empty:$('camera-empty'),status:$('camera-state'),note:$('camera-note')});
@@ -101,11 +101,18 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     $('stop').title=!demo&&!state.controlCapabilities?.pause?'Planner braking/hold service is not available':'';
     if(activePress&&!canSteer)releasePress('steering unavailable');
     text('data-title',demo?'Make your own path.':'Your backend. Your live view.');
-    text('data-note',demo?'Add obstacles in Build arena, choose a goal, then switch to Drone POV to watch the flight.':state.statusMessage);
+    text('data-note',demo?'Choose a target and add moving objects in Build arena. Follow the planned route in 3D or Drone POV.':state.statusMessage);
     text('footer-status',demo?'Browser demo · hold to steer':state.controlAvailable?'SANDO supervisor connected · leased steering':'Read-only telemetry · no command transport');
     const target=state.command?.type==='move'&&['accepted','moving'].includes(state.command.phase)?state.command.target:null;
     const simulation=demo?adapter.getSimulation():null;
     $('planner-panel').hidden=!demo;
+    const exploration=!demo?state.exploration:null;
+    $('exploration-panel').hidden=!exploration;
+    if(exploration){
+      text('exploration-state',exploration.state.toUpperCase());text('exploration-reason',exploration.reason);
+      text('exploration-frontiers',exploration.frontier_cells);text('exploration-reachable',exploration.reachable_cells);
+      text('exploration-unknown',exploration.unknown_voxels);text('exploration-scope',exploration.completion_scope);
+    }
     $('simulation-views').hidden=!demo;
     const isPov=demo&&simulationView==='pov';
     $('main-canvas-wrap').classList.toggle('pov-mode',isPov);
@@ -116,10 +123,16 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     text('viewer-title',isPov?'Drone POV':demo&&simulationView==='arena'?'Build your obstacle course':'Live 3D environment');
     text('viewer-hint',isPov?'SIMULATED POV · SPACE TO PAUSE':demo&&simulationView==='arena'?'CLICK TO EDIT · DRAG TO PAN · SCROLL TO ZOOM':'DRAG TO ORBIT · SCROLL TO ZOOM');
     for(const [id,view]of [['view-pov','pov'],['view-arena','arena'],['view-map','map']]){pressed(id,simulationView===view);$(id).classList.toggle('selected',simulationView===view);}
-    if(simulation){text('obstacle-count',`${simulation.placed.length} / 24`);if(isPov)pov.setData(simulation);}
+    const selectedActor=selectedObject?.kind==='moving'?simulation?.movers.find(o=>o.id===selectedObject.id):null;
+    const selectedBox=selectedObject?.kind==='static'?simulation?.placed.find(r=>r.every((v,i)=>v===selectedObject.box[i])):null;
+    if(!selectedActor&&!selectedBox)selectedObject=null;
+    $('selected-object').hidden=!selectedObject;
+    text('selected-object-label',selectedActor?`Selected ${selectedActor.id}`:'Selected static object');
+    for(const axis of ['x','y'])pressed('selected-motion-'+axis,selectedActor?.axis===axis);
+    if(simulation){text('obstacle-count',`${simulation.objectCount} / 24`);if(isPov)pov.setData(simulation);}
 
     if(simulation){text('planner-status',simulation.status);text('planner-clearance',`${simulation.clearance.toFixed(2)} m`);text('planner-count',`${simulation.plans} / ${simulation.completed}`);}
-    const overlay=simulation&&showPlan?{planned:simulation.path,movers:simulation.movers,goal:simulation.goal,margin:state.profile.inflation_hgp+state.profile.dyn_base_inflation_m+.24}:{};
+    const overlay=simulation?{planned:showPlan?simulation.path:[],movers:simulation.movers,goal:simulation.goal,predictions:simulation.predictions,heat:showPlan,selectedId:selectedActor?.id,selectedBox,margin:state.profile.inflation_hgp+state.profile.dyn_base_inflation_m+simulation.bodyRadius}:{goal:exploration?.goal??null};
     scenes.top.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,placed:simulation?.placed??[],staticMargin:state.profile.inflation_hgp+.24,...overlay});
     scenes.main.setData({points:state.mapPoints,pose:state.pose,trail:state.trail,target,placed:simulation?.placed??[],staticMargin:state.profile.inflation_hgp+.24,...overlay});
     scenes.history.setData({points:display.combinedPoints,pose:display.pose,trail:display.trail,target:null});
@@ -138,6 +151,7 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
   const settings=new URLSearchParams(globalThis.location?.search??'');
   function connectSource(source){
     releasePress('source changed');
+    selectedObject=null;
     if(source==='demo')adapter.startDemo();
     else{adapter.connectLive();const control=settings.get('control');if(control&&!adapter.connectControl(control))toast('Invalid command supervisor URL');}
     setTopFollow(true);setMainFollow(true);
@@ -150,11 +164,17 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     // A model notification updates visibility immediately, also while paused.
     store.tick(Date.now());
   }
-  function editArena(point){
+  function editArena(point,objectPoint){
     if(store.getState().source!=='demo')return;
+    if(editorTool==='goal'&&objectPoint){
+      const sim=adapter.getSimulation(),actor=sim?.movers.find(o=>o.axis&&Math.hypot(o.position[0]-objectPoint[0],o.position[1]-objectPoint[1])<.01);
+      const box=sim?.placed.find(r=>objectPoint[0]>=r[0]&&objectPoint[0]<=r[2]&&objectPoint[1]>=r[1]&&objectPoint[1]<=r[3]);
+      if(actor||box){releasePress('Object selected');selectedObject=actor?{kind:'moving',id:actor.id}:{kind:'static',box:[...box]};store.tick(Date.now());return;}
+    }
+    selectedObject=null;
     if(editorTool==='goal'){sendGoal(point);return;}
     releasePress('scene edited');
-    const result=adapter.editSimulation(editorTool==='add'?'add':'remove',point,$('obstacle-kind').value||'crate');
+    const result=adapter.editSimulation(editorTool==='add'?'add':'remove',editorTool==='remove'&&objectPoint?objectPoint:point,$('obstacle-kind').value||'moving',{axis:$('movement-axis').value||'x'});
     toast(result.ok?(editorTool==='add'?'Obstacle added · route invalidated':'Obstacle removed · replanning'):result.reason);
     store.tick(Date.now());
   }
@@ -163,15 +183,22 @@ export function mountDashboard({ document: doc = globalThis.document, autoStart 
     text('editor-help',tool==='add'?'Click open space to add an obstacle. The drone replans immediately.':tool==='remove'?'Click a judge-added obstacle to remove it.':'Click open space to choose the drone’s destination.');
     applySimulationView('arena');
   });
+  on('deselect-object','click',()=>{selectedObject=null;store.tick(Date.now());});
+  for(const axis of ['x','y'])on('selected-motion-'+axis,'click',()=>{
+    releasePress('Object motion changed');const result=adapter.editSimulation('motion',selectedObject,axis);
+    if(result.ok){selectedObject={kind:'moving',id:result.id};toast(`Object moving along ${axis.toUpperCase()}`);}else toast(result.reason);
+    store.tick(Date.now());
+  });
   on('view-pov','click',()=>applySimulationView('pov'));on('view-arena','click',()=>applySimulationView('arena'));on('view-map','click',()=>applySimulationView('map'));
   on('clear-obstacles','click',()=>{const result=adapter.editSimulation('clear');toast(result.ok?'Added obstacles cleared':result.reason);store.tick(Date.now());});
   function sendGoal(point){
-    if(store.getState().explorationMode==='paused'){toast('Resume exploration before sending a goal.');return;}
+    if(store.getState().source!=='demo'){toast('Target selection is available in simulation mode');return;}
     releasePress('goal selected');const result=adapter.setSimulationGoal(point);
+    if(result?.ok&&store.getState().explorationMode==='paused')store.resumeExploration();
     toast(result?.ok?'Destination set · planning around obstacles':result?.reason??'Simulation unavailable');
   }
   on('send-goal','click',()=>sendGoal(MISSIONS[Number($('mission-goal').value)]??MISSIONS[1]));
-  on('show-plan','change',()=>{showPlan=$('show-plan').checked;});
+  on('show-plan','change',()=>{showPlan=$('show-plan').checked;store.tick(Date.now());});
   on('reset-lab','click',()=>{releasePress('simulation reset');adapter.startDemo();setTopFollow(true);applySimulationView(simulationView);toast('Obstacle course restarted');});
   for(const id of ['top-canvas','main-canvas','pov-canvas'])on(id,'keydown',event=>{if(event.key===' '){event.preventDefault();$('stop').click();}});
   on('live-tab','click',()=>changeView('live'));on('history-tab','click',()=>changeView('history'));

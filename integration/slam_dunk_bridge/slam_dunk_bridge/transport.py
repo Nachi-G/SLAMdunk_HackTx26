@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 WEB_ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/mission-map.html": ("mission-map.html", "text/html; charset=utf-8"),
+    "/flight-room.html": ("flight-room.html", "text/html; charset=utf-8"),
     "/dashboard.html": ("dashboard.html", "text/html; charset=utf-8"),
     "/room.css": ("room.css", "text/css; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),

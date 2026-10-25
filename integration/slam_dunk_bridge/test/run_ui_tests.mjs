@@ -15,3 +15,5 @@ const {runCollisionTests}=await import('./collision.test.mjs');
 console.log('Swept collision avoidance:',JSON.stringify(runCollisionTests()));
 const {runMissionMapTests}=await import('./mission_map.test.mjs');
 console.log('Mission map and recording:',JSON.stringify(runMissionMapTests()));
+const {runBackupTests}=await import('./backup_integration.test.mjs');
+console.log('Combined Backup dashboard:',JSON.stringify(runBackupTests()));

@@ -8,6 +8,17 @@ from slam_dunk_bridge.transport import BridgeServer, WEB_ASSETS
 
 
 class DashboardRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dashboard_home_and_preserved_flight_room(self):
+        server = BridgeServer(LatestStore())
+        for route in ('/', '/index.html', '/dashboard.html'):
+            status, _, body = await server._http(route, {})
+            self.assertEqual(status, HTTPStatus.OK)
+            self.assertIn(b'id="main-canvas"', body)
+            self.assertIn(b'href="/flight-room.html"', body)
+        status, _, body = await server._http('/flight-room.html', {})
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertIn(b'id="room-canvas"', body)
+
     async def test_every_asset_and_query(self):
         server = BridgeServer(LatestStore())
         for route, (_, mime) in WEB_ASSETS.items():
