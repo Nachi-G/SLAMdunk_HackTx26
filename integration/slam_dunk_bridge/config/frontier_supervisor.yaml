@@ -1,0 +1,43 @@
+slam_dunk_mission_supervisor:
+  ros__parameters:
+    # Opt in only after verifying the simulated sensor, clocks, TF and bounds.
+    enable_exploration: false
+    autonomy_mode: frontier
+    waypoints_json: '[]'
+    planning_frame: map
+    goal_topic: /NX01/term_goal
+    pose_topic: /NX01/visual_slam/odom
+    map_topic: /NX01/occupancy_grid
+    exploration_sensor_topic: /NX01/mid360_PointCloud2
+    # Empty means the raw cloud's own sensor frame. If cloud coordinates are
+    # already in map, set the actual sensor frame here; never use map itself.
+    exploration_sensor_origin_frame: ''
+    # Example finite mission box, NOT a statement of your building dimensions.
+    # Set these bounds inside SANDO's planning bounds and observed environment.
+    bounds: [-10.0, 10.0, -10.0, 10.0, 0.5, 4.5]
+    exploration_voxel_size_m: 0.5
+    exploration_clearance_m: 0.3
+    exploration_sensor_range_m: 10.0
+    # Matches SANDO's default force_goal_z / default_goal_z. This explores one
+    # horizontal slice; for full 3D flight also disable force_goal_z in SANDO.
+    exploration_3d: false
+    exploration_altitude_m: 2.0
+    exploration_arrival_radius_m: 0.6
+    exploration_settle_seconds: 2.0
+    exploration_progress_timeout_seconds: 20.0
+    exploration_retry_seconds: 10.0
+    exploration_max_attempts: 2
+    exploration_confirmation_scans: 3
+    exploration_max_voxels: 100000
+    exploration_max_rays: 1200
+    host: 127.0.0.1
+    port: 8766
+    lookahead_m: 3.0
+    goal_seen_radius_m: 2.0
+    lease_seconds: 0.5
+    freshness_seconds: 2.0
+    allowed_origins:
+      - http://127.0.0.1:8080
+      - http://localhost:8080
+      - http://127.0.0.1:8765
+      - http://localhost:8765

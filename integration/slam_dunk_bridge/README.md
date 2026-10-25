@@ -6,6 +6,12 @@ steering uses the separate [SANDO mission supervisor](SANDO_CONTROL.md), with
 lease expiry, waypoint handoff and explicit readiness. Physical Pause/Hold is
 still unsupported. The browser-only demo works without ROS or a camera source.
 
+The optional [continuous frontier explorer](EXPLORATION.md) keeps selecting
+destinations from timestamped raw LiDAR evidence until reachable frontiers are
+exhausted within configured mission bounds. It runs through the same supervisor,
+retains manual steering handoff, and distinguishes blocked from completed work.
+It is opt-in and has not been validated in live Gazebo flight.
+
 This read-only ROS 2 Humble Python package streams SANDO's existing geometric map and odometry to a bundled interactive browser viewer. It does not train a scene or wait for a recording. Open the viewer and map snapshots appear as the existing mapper publishes them; the default bridge processing/transmission target is at most 10 Hz. Actual end-to-end latency must be measured on the simulator machine.
 
 ## Run with the simulation
