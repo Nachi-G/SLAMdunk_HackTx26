@@ -1,7 +1,7 @@
 import {createDemo} from './demo.mjs';
 
 /** Telemetry and leased control use separate sockets. /stream stays read-only. */
-export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()=>Date.now(),schedule=globalThis.setInterval,cancel=globalThis.clearInterval}={}) {
+export function createAdapter({store,room=false,WebSocketImpl=globalThis.WebSocket,clock=()=>Date.now(),schedule=globalThis.setInterval,cancel=globalThis.clearInterval}={}) {
   if(!store||typeof store.ingest!=='function'||typeof clock!=='function'||typeof schedule!=='function'||typeof cancel!=='function')throw new TypeError('Adapter requires store, clock and timer functions');
   let timer=null,socket=null,controlSocket=null,demo=null,generation=0,controlGeneration=0,retryAt=null,liveUrl=null;
   let held=null,sequence=0,controlStatusAt=null,lastControlStatus=null,releasePending=false;
@@ -65,7 +65,7 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
     if(held&&store.getState().source==='live'&&(store.getState().view!=='live'||store.getState().stale.pose||store.getState().stale.map||store.getState().connection!=='connected'))releaseSteering('Live telemetry unavailable');
   };
   const adapter={
-    startDemo(){teardown();store.reset('demo');demo=createDemo(store);demo.step(clock());timer=schedule(tick,100);return true;},
+    startDemo(){teardown();store.reset('demo');if(room)store.setSpeedMode('standard');demo=createDemo(store,26,{room});demo.step(clock());timer=schedule(tick,100);return true;},
     connectLive(url){
       const fallback=globalThis.location?`${location.protocol==='https:'?'wss':'ws'}://${location.host}/stream`:null;
       const parsed=validUrl(url??fallback,'/stream');if(!parsed||typeof WebSocketImpl!=='function')return false;
@@ -94,6 +94,7 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
       if(held)return {ok:false,reason:'A steering direction is already held'};
       if(releasePending)return {ok:false,reason:'Waiting for steering release acknowledgment'};
       if(store.getState().source==='demo'){
+        if(room&&!demo?.snapshot().started)return {ok:false,reason:'Click Start before pushing the drone'};
         const result=store.startSteering(direction,clock());if(result.ok){held={requestId:result.steering.leaseId};demo?.clearManual();}return result;
       }
       const s=store.getState();
@@ -130,6 +131,17 @@ export function createAdapter({store,WebSocketImpl=globalThis.WebSocket,clock=()
     // Compatibility for older callers; dashboard buttons use leased steering.
     command(direction,distance=1){const result=store.command(direction,distance);if(result.ok)demo?.move(result.command);return result;},
     stop(){releaseSteering('Legacy stop');const result=store.stop();if(result.ok)demo?.stop();return result;},
+    editSimulation(action,point,kind,options){
+      if(store.getState().source!=='demo'||!demo)return {ok:false,reason:'Obstacle editing is only available in the synthetic demo'};
+      if(action==='add')return demo.addObstacle(point,kind,options);
+      if(action==='remove')return demo.removeObstacle(point);
+      if(action==='motion')return demo.setObjectMotion(point,kind);
+      if(action==='clear')return demo.clearObstacles();
+      return {ok:false,reason:'Unknown scene action'};
+    },
+    startSimulation(){if(!room||store.getState().source!=='demo'||!demo)return {ok:false,reason:'Start is only available in the flight room'};const result=demo.start();store.resumeExploration();return result;},
+    getSimulation(){return demo?.snapshot()??null;},
+    setSimulationGoal(point){if(store.getState().source!=='demo')return {ok:false,reason:'Simulation goals are only available in the synthetic demo'};return demo?.setGoal(point)??{ok:false,reason:'Start the demo first'};},
     setProfile(value){return store.setProfile(value);},
     setSpeedMode(mode){return store.setSpeedMode(mode);},
     dispose(){teardown();return true;}

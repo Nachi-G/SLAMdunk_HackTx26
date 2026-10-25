@@ -19,6 +19,16 @@ class DashboardRouteTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(dict(headers)["X-Content-Type-Options"], "nosniff")
                     self.assertGreater(len(body), 0)
 
+    async def test_room_stylesheet_contains_layout_not_javascript(self):
+        server = BridgeServer(LatestStore())
+        status, headers, body = await server._http("/room.css?v=room-fix-2", {})
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(dict(headers)["Content-Type"], "text/css; charset=utf-8")
+        self.assertRegex(body, rb":root\s*\{")
+        self.assertRegex(body, rb"\.room-canvas-wrap\s*\{")
+        self.assertRegex(body, rb"#selected-object\s*\{")
+        self.assertNotRegex(body, rb"(?m)^\s*(?:import |export )")
+
     async def test_private_paths_and_unknown_assets_are_never_served(self):
         server = BridgeServer(LatestStore())
         fragments = ("../core.py", "../transport.py", "../node.py", "../viewer.html",

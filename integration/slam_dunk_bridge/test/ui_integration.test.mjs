@@ -40,15 +40,15 @@ function canvasContext() {
   return context;
 }
 
-function markup() {
-  const html=readFileSync(new URL('../slam_dunk_bridge/web/index.html',import.meta.url),'utf8');
+function markup(filename='dashboard.html') {
+  const html=readFileSync(new URL(`../slam_dunk_bridge/web/${filename}`,import.meta.url),'utf8');
   const elements=new Map();
   for(const m of html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)){
     const e=new Element(m[1]);e.parentElement=new Element();e.hidden=/\bhidden\b/.test(m[0]);
     const value=m[0].match(/\bvalue="([^"]*)"/);if(value)e.value=value[1];
     if(m[0].startsWith('<canvas'))e.context=canvasContext();elements.set(e.id,e);
   }
-  elements.get('source').value='demo';
+  if(elements.has('source'))elements.get('source').value='demo';
   const directions=[...html.matchAll(/data-direction="([^"]+)"/g)].map(m=>{const e=new Element();e.dataset.direction=m[1];return e;});
   const doc=new Element('document');doc.elements=elements;doc.directions=directions;
   doc.defaultView=new Element('window');
@@ -103,7 +103,7 @@ export function runIntegrationTests() {
       get('stop').click();assert.equal(app.store.getState().explorationMode,'paused');const held=[...app.store.getState().pose.position];env.advance(200);assert.deepEqual(app.store.getState().pose.position,held);
       get('stop').click();assert.equal(app.store.getState().explorationMode,'autonomous');
       get('top-follow').click();assert.equal(get('top-follow').getAttribute('aria-pressed'),'false');get('top-follow').click();
-      get('main-fit').click();assert.equal(get('main-follow').getAttribute('aria-pressed'),'false');get('main-follow').click();
+      get('view-map').click();get('main-fit').click();assert.equal(get('main-follow').getAttribute('aria-pressed'),'false');get('main-follow').click();
       get('main-canvas').fire('keydown',{key:'0'});assert.equal(get('main-follow').getAttribute('aria-pressed'),'false');
       env.advance(100);assert.equal(get('main-follow').getAttribute('aria-pressed'),'false');get('main-follow').click();
       get('open-history').click();assert.equal(app.store.getState().view,'history');assert.equal(get('live-screen').hidden,true);
@@ -198,7 +198,46 @@ export function runIntegrationTests() {
     } finally {scene?.destroy();env.restore();}
   }
   for(let i=0;i<300;i++){assert.throws(()=>createScene(i%2?{}:null),TypeError);counts.sceneInvalidConstructionCases++;}
+  counts.obstacleLabScenarios=runObstacleLabTests();
   return counts;
 }
 
+export function runObstacleLabTests(){
+  const env=environment(400),doc=markup(),get=id=>doc.getElementById(id);let app;
+  try{
+    app=mountDashboard({document:doc});env.advance(100);
+    assert.equal(get('planner-panel').hidden,false);
+    assert.equal(get('pov-canvas').hidden,false);
+    get('tool-add').click();assert.equal(get('main-canvas').hidden,false);assert.equal(get('view-arena').getAttribute('aria-pressed'),'true');
+    const point={clientX:331.05,clientY:165.79,pointerId:12,button:0};
+    get('top-canvas').fire('pointerdown',point);get('top-canvas').fire('pointerup',point);
+    assert.equal(app.adapter.getSimulation().placed.length,1);assert.equal(get('obstacle-count').textContent,'1 / 24');
+    get('tool-remove').click();get('top-canvas').fire('pointerdown',point);get('top-canvas').fire('pointerup',point);
+    assert.equal(app.adapter.getSimulation().placed.length,0);
+    get('tool-add').click();get('top-canvas').fire('pointerdown',point);get('top-canvas').fire('pointerup',point);
+    get('clear-obstacles').click();assert.equal(app.adapter.getSimulation().placed.length,0);
+    get('tool-goal').click();get('view-pov').click();assert.equal(get('pov-canvas').hidden,false);assert.equal(get('main-canvas').hidden,true);
+
+    get('mission-goal').value='2';get('send-goal').click();env.advance(100);
+    assert.deepEqual(app.adapter.getSimulation().goal,[1,7,1.8]);
+    get('show-plan').checked=false;get('show-plan').fire('change');env.advance(100);
+    get('top-canvas').fire('keydown',{key:' '});assert.equal(app.store.getState().explorationMode,'paused');
+    get('main-canvas').fire('keydown',{key:' '});assert.equal(app.store.getState().explorationMode,'autonomous');
+    get('reset-lab').click();env.advance(100);assert.equal(app.adapter.getSimulation().completed,0);
+    // Double-click the visible drone center: screen-to-world conversion yields
+    // its current XY position, with altitude preserved.
+    const p=app.store.getState().pose.position;
+    get('top-canvas').fire('dblclick',{clientX:320,clientY:210});env.advance(100);
+    assert.ok(Math.hypot(...app.adapter.getSimulation().goal.map((v,i)=>v-p[i]))<.02);
+    get('source').value='live';get('source').fire('change');
+    assert.equal(get('planner-panel').hidden,true);assert.equal(app.adapter.getSimulation(),null);
+    assert.equal(app.adapter.setSimulationGoal([1,7,1.8]).ok,false);
+    assert.equal(app.adapter.editSimulation('add',[-8,-2],'crate').ok,false);
+    assert.equal(get('pov-canvas').hidden,true);
+    return 1;
+  }finally{app?.destroy();env.restore();}
+}
+
 if(import.meta.url===new URL(process.argv[1],'file:///').href)console.log(JSON.stringify(runIntegrationTests(),null,2));
+
+export {markup as createTestMarkup,environment as createTestEnvironment};

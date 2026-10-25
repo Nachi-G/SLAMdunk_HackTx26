@@ -10,10 +10,13 @@ from urllib.parse import urlsplit
 # Deliberate allowlist: never expose arbitrary package or workspace files.
 WEB_ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/mission-map.html": ("mission-map.html", "text/html; charset=utf-8"),
+    "/dashboard.html": ("dashboard.html", "text/html; charset=utf-8"),
+    "/room.css": ("room.css", "text/css; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     **{f"/{name}.mjs": (f"{name}.mjs", "text/javascript; charset=utf-8")
-       for name in ("app", "scene", "model", "adapter", "demo", "camera")},
+       for name in ("app", "scene", "model", "adapter", "demo", "camera", "planner", "pov", "room", "mission-log", "mission-map", "room-layout")},
 }
 
 
